@@ -55,6 +55,9 @@ export const copyIcon = (
   </svg>
 )
 
+const TSV_SEPARATOR = '\u0009'
+const toTsv = (values: string[]) => values.join(TSV_SEPARATOR)
+
 const GenerationItem: FC<IGenerationItemProps> = ({
   isWorkflow,
   workflowProcessData,
@@ -73,6 +76,43 @@ const GenerationItem: FC<IGenerationItemProps> = ({
 }) => {
   const { t } = useTranslation()
   const isTop = depth === 1
+
+  const parsedOutput = typeof content === 'string'
+    ? content.split(/\r?\n/).filter(Boolean).map((line: string) => line.split('\t'))
+    : []
+  const hasComplaintOutput = parsedOutput.length > 0 && parsedOutput.every((row: string[]) => row.length >= 19)
+  const normalOutput = typeof content === 'string' ? content : JSON.stringify(content)
+  const classificationTrace = workflowProcessData?.tracing.find(node => node.node_id === 'classify' || node.title.includes('判断客诉类型'))
+  const classificationRaw = classificationTrace?.outputs?.text || classificationTrace?.outputs
+  let fallbackCandidates: Array<{ level_2?: string; confidence?: number }> = []
+  if (classificationRaw) {
+    try {
+      const parsed = typeof classificationRaw === 'string' ? JSON.parse(classificationRaw) : classificationRaw
+      fallbackCandidates = Array.isArray(parsed?.candidates) ? parsed.candidates : []
+    }
+    catch {
+      fallbackCandidates = []
+    }
+  }
+
+  const getConfidenceData = (row: string[]) => {
+    const firstConfidence = Number(row[8])
+    const secondConfidence = Number(row[17])
+    const gap = Number(row[18])
+    const firstFromTrace = fallbackCandidates[0]
+    const secondFromTrace = fallbackCandidates[1]
+    return {
+      firstType: row[1],
+      firstConfidence: Number.isFinite(firstConfidence) ? firstConfidence : Number(firstFromTrace?.confidence),
+      secondType: row[10] && row[10] !== 'null' ? row[10] : secondFromTrace?.level_2,
+      secondConfidence: Number.isFinite(secondConfidence) ? secondConfidence : Number(secondFromTrace?.confidence),
+      gap: Number.isFinite(gap)
+        ? gap
+        : (firstFromTrace?.confidence !== undefined && secondFromTrace?.confidence !== undefined
+            ? Number(firstFromTrace.confidence) - Number(secondFromTrace.confidence)
+            : NaN),
+    }
+  }
 
   const [completionRes, setCompletionRes] = useState('')
   const [childMessageId, setChildMessageId] = useState<string | null>(null)
@@ -152,7 +192,61 @@ const GenerationItem: FC<IGenerationItemProps> = ({
                   <div className='text-gray-400 text-sm'>{t('app.generation.batchFailed.outputPlaceholder')}</div>
                 )}
                 {!isError && (typeof content === 'string') && (
-                  <Markdown content={content} />
+                  hasComplaintOutput
+                    ? (
+                      <div className='space-y-4'>
+                        {parsedOutput.map((row: string[], index: number) => {
+                          const { firstType, firstConfidence, secondType, secondConfidence, gap } = getConfidenceData(row)
+                          const candidates = [
+                            { title: firstType, confidence: firstConfidence, values: row.slice(0, 8), accent: 'border-gray-200 bg-white', tone: 'text-gray-800' },
+                            { title: secondType || row[10], confidence: secondConfidence, values: row.slice(9, 17), accent: 'border-indigo-200 bg-indigo-50/40', tone: 'text-indigo-900' },
+                          ]
+                          const warnings = []
+                          if (Number.isFinite(firstConfidence) && firstConfidence < 0.70)
+                            warnings.push('置信度偏低，建议人工介入复查')
+                          if (Number.isFinite(gap) && gap < 0.15)
+                            warnings.push(`置信度相近（相差 ${(gap * 100).toFixed(1)}%），建议人工介入复查`)
+
+                          return (
+                            <div key={index} className='space-y-3'>
+                              <div className='space-y-3'>
+                                {candidates.map((candidate, candidateIndex) => (
+                                  <section key={candidateIndex} className={`overflow-hidden rounded-lg border ${candidate.accent}`}>
+                                    <div className='flex items-center justify-between border-b border-inherit px-4 py-3'>
+                                      <div className={`font-semibold ${candidate.tone}`}>
+                                        <div className='text-xs font-medium opacity-70'>第{candidateIndex + 1}名</div>
+                                        <div className='mt-0.5 text-sm'>{candidate.title && candidate.title !== 'null' ? candidate.title : '未提供候选'}</div>
+                                      </div>
+                                      <div className='flex items-center gap-3'>
+                                        <span className={`text-sm font-semibold ${candidate.tone}`}>置信度：{Number.isFinite(candidate.confidence) ? `${(candidate.confidence * 100).toFixed(1)}%` : '未提供'}</span>
+                                        <SimpleBtn className='space-x-1' onClick={() => {
+                                          copy(toTsv(candidate.values), { format: 'text/plain' })
+                                          Toast.notify({ type: 'success', message: t('common.actionMsg.copySuccessfully') })
+                                        }}>
+                                          <Clipboard className='w-3.5 h-3.5' />
+                                          <div>{t('common.operation.copy')}</div>
+                                        </SimpleBtn>
+                                      </div>
+                                    </div>
+                                    <pre
+                                      className={`overflow-auto whitespace-pre-wrap break-words px-4 py-3 text-sm leading-6 ${candidate.tone}`}
+                                      style={{ tabSize: 4 }}
+                                    >{toTsv(candidate.values)}</pre>
+                                  </section>
+                                ))}
+                              </div>
+                              {warnings.length > 0 && (
+                                <section className='rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900'>
+                                  <div className='mb-1 font-semibold'>预警</div>
+                                  {warnings.map(warning => <div key={warning}>{warning}</div>)}
+                                </section>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                    : <Markdown content={content} />
                 )}
                 {!isError && (typeof content !== 'string') && (
                   <CodeEditor
@@ -168,19 +262,19 @@ const GenerationItem: FC<IGenerationItemProps> = ({
 
             <div className='flex items-center justify-between mt-3'>
               <div className='flex items-center'>
-                <SimpleBtn
+                {!hasComplaintOutput && <SimpleBtn
                   isDisabled={isError || !messageId}
                   className={cn(isMobile && '!px-1.5', 'space-x-1')}
                   onClick={() => {
                     if (typeof content === 'string')
-                      copy(content)
+                      copy(normalOutput)
                     else
                       copy(JSON.stringify(content))
                     Toast.notify({ type: 'success', message: t('common.actionMsg.copySuccessfully') })
                   }}>
                   <Clipboard className='w-3.5 h-3.5' />
                   {!isMobile && <div>{t('common.operation.copy')}</div>}
-                </SimpleBtn>
+                </SimpleBtn>}
                 {isInWebApp && (
                   <>
                     {isError && <SimpleBtn
