@@ -1,7 +1,7 @@
 'use client'
 
 import type { ChangeEvent, FC } from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { imageUpload } from './utils'
 import type { ImageFile } from '@/types/app'
@@ -13,6 +13,7 @@ type UploaderProps = {
   onUpload: (imageFile: ImageFile) => void
   limit?: number
   disabled?: boolean
+  enablePaste?: boolean
 }
 
 const Uploader: FC<UploaderProps> = ({
@@ -20,17 +21,13 @@ const Uploader: FC<UploaderProps> = ({
   onUpload,
   limit,
   disabled,
+  enablePaste = false,
 }) => {
   const [hovering, setHovering] = useState(false)
   const { notify } = Toast
   const { t } = useTranslation()
 
-  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-
-    if (!file)
-      return
-
+  const handleFile = (file: File) => {
     if (limit && file.size > limit * 1024 * 1024) {
       notify({ type: 'error', message: t('common.imageUploader.uploadFromComputerLimit', { size: limit }) })
       return
@@ -75,6 +72,36 @@ const Uploader: FC<UploaderProps> = ({
     )
     reader.readAsDataURL(file)
   }
+
+  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file)
+      handleFile(file)
+  }
+
+  useEffect(() => {
+    if (!enablePaste)
+      return
+
+    const handlePaste = (e: ClipboardEvent) => {
+      if (disabled || e.defaultPrevented)
+        return
+
+      const imageFiles = Array.from(e.clipboardData?.items || [])
+        .filter(item => ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(item.type))
+        .map(item => item.getAsFile())
+        .filter((file): file is File => file !== null)
+
+      if (!imageFiles.length)
+        return
+
+      e.preventDefault()
+      imageFiles.forEach(handleFile)
+    }
+
+    document.addEventListener('paste', handlePaste)
+    return () => document.removeEventListener('paste', handlePaste)
+  }, [disabled, enablePaste, handleFile])
 
   return (
     <div

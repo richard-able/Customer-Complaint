@@ -21,6 +21,9 @@ export const userInputsFormToPromptVariables = (useInputs: UserInputFormItem[] |
       if (isParagraph)
         return ['paragraph', item.paragraph]
 
+      if (item['file-list'])
+        return ['file-list', item['file-list']]
+
       if (item['text-input'])
         return ['string', item['text-input']]
 
@@ -32,7 +35,17 @@ export const userInputsFormToPromptVariables = (useInputs: UserInputFormItem[] |
 
       return ['select', item.select]
     })()
-    if (type === 'string' || type === 'paragraph') {
+    if (type === 'file-list') {
+      promptVariables.push({
+        key: content.variable,
+        name: content.label,
+        required: content.required,
+        type,
+        number_limits: content.number_limits,
+        transfer_methods: content.allowed_file_upload_methods,
+      })
+    }
+    else if (type === 'string' || type === 'paragraph') {
       promptVariables.push({
         key: content.variable,
         name: content.label,

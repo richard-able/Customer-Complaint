@@ -94,6 +94,7 @@ const TextGenerationImageUploader: FC<TextGenerationImageUploaderProps> = ({
       onUpload={onUpload}
       disabled={files.length >= settings.number_limits}
       limit={+settings.image_file_size_limit!}
+      enablePaste
     >
       {
         hovering => (
@@ -140,6 +141,9 @@ const TextGenerationImageUploader: FC<TextGenerationImageUploaderProps> = ({
             return null
           })
         }
+      </div>
+      <div className='mt-1 text-xs text-gray-400'>
+        {t('common.imageUploader.pasteFromClipboard')}
       </div>
     </div>
   )

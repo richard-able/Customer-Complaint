@@ -16,6 +16,9 @@ export type PromptVariable = {
   required?: boolean
   options?: string[]
   max_length?: number
+  number_limits?: number
+  transfer_methods?: TransferMethod[]
+  image_file_size_limit?: number
 }
 
 export type PromptConfig = {
@@ -43,6 +46,16 @@ export type UserInputFormItem = {
   'text-input': TextTypeFormItem
 } | {
   'select': SelectTypeFormItem
+} | {
+  'file-list': {
+    label: string
+    variable: string
+    required: boolean
+    number_limits?: number
+    allowed_file_upload_methods?: TransferMethod[]
+    allowed_file_types?: string[]
+    allowed_file_extensions?: string[]
+  }
 }
 
 export const MessageRatings = ['like', 'dislike', null] as const

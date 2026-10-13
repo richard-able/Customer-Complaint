@@ -32,6 +32,7 @@ const translation = {
     uploadFromComputerUploadError: '图片上传失败，请重新上传。',
     uploadFromComputerLimit: '上传图片不能超过 {{size}} MB',
     pasteImageLink: '粘贴图片链接',
+    pasteFromClipboard: '支持 Ctrl+V 粘贴图片；Mac 请按 ⌘+V',
     pasteImageLinkInputPlaceholder: '将图像链接粘贴到此处',
     pasteImageLinkInvalid: '图片链接无效',
     imageUpload: '图片上传',

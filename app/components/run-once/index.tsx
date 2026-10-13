@@ -5,6 +5,7 @@ import {
   PlayIcon,
 } from '@heroicons/react/24/solid'
 import Select from '@/app/components/base/select'
+import { Resolution, TransferMethod } from '@/types/app'
 import type { PromptConfig, VisionFile, VisionSettings } from '@/types/app'
 import Button from '@/app/components/base/button'
 import { DEFAULT_VALUE_MAX_LEN } from '@/config'
@@ -80,6 +81,26 @@ const RunOnce: FC<IRunOnceProps> = ({
                     placeholder={`${item.name}${!item.required ? `(${t('appDebug.variableTable.optional')})` : ''}`}
                     value={inputs[item.key]}
                     onChange={(e) => { onInputsChange({ ...inputs, [item.key]: e.target.value }) }}
+                  />
+                )}
+                {item.type === 'file-list' && (
+                  <TextGenerationImageUploader
+                    settings={{
+                      enabled: true,
+                      number_limits: item.number_limits || 20,
+                      transfer_methods: item.transfer_methods?.length ? item.transfer_methods : [TransferMethod.local_file],
+                      detail: Resolution.low,
+                      image_file_size_limit: 10,
+                    }}
+                    onFilesChange={files => onInputsChange({
+                      ...inputs,
+                      [item.key]: files.filter(file => file.progress !== -1).map(fileItem => ({
+                        type: 'image',
+                        transfer_method: fileItem.type,
+                        url: fileItem.type === 'local_file' ? '' : fileItem.url,
+                        upload_file_id: fileItem.fileId,
+                      })),
+                    })}
                   />
                 )}
               </div>

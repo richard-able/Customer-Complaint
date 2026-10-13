@@ -105,7 +105,8 @@ const Result: FC<IResultProps> = ({
       if (hasEmptyInput)
         return
 
-      if (!inputs[key])
+      const value = inputs[key]
+      if (!value || (Array.isArray(value) && value.length === 0))
         hasEmptyInput = name
     })
 
@@ -114,6 +115,10 @@ const Result: FC<IResultProps> = ({
       return false
     }
     if (completionFiles.find(item => item.transfer_method === TransferMethod.local_file && !item.upload_file_id)) {
+      notify({ type: 'info', message: t('appDebug.errorMessage.waitForImgUpload') })
+      return false
+    }
+    if (prompt_variables.some(({ type, key }) => type === 'file-list' && (inputs[key] || []).some((file: VisionFile) => file.transfer_method === TransferMethod.local_file && !file.upload_file_id))) {
       notify({ type: 'info', message: t('appDebug.errorMessage.waitForImgUpload') })
       return false
     }

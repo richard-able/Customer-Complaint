@@ -32,6 +32,7 @@ const translation = {
     uploadFromComputerUploadError: 'Image upload failed, please upload again.',
     uploadFromComputerLimit: 'Upload images cannot exceed {{size}} MB',
     pasteImageLink: 'Paste image link',
+    pasteFromClipboard: 'Press Ctrl+V to paste an image (⌘+V on Mac)',
     pasteImageLinkInputPlaceholder: 'Paste image link here',
     pasteImageLinkInvalid: 'Invalid image link',
     imageUpload: 'Image Upload',
