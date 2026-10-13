@@ -19,7 +19,7 @@ import { Resolution, TransferMethod } from '@/types/app'
 import { changeLanguage } from '@/i18n/i18next-config'
 import Loading from '@/app/components/base/loading'
 import AppUnavailable from '@/app/components/app-unavailable'
-import { API_KEY, APP_ID, APP_INFO, DEFAULT_VALUE_MAX_LEN, IS_WORKFLOW } from '@/config'
+import { APP_ID, APP_INFO, DEFAULT_VALUE_MAX_LEN, IS_WORKFLOW } from '@/config'
 import { userInputsFormToPromptVariables } from '@/utils/prompt'
 
 const GROUP_SIZE = 5 // to avoid RPM(Request per minute) limit. The group task finished then the next group.
@@ -56,7 +56,7 @@ const TextGeneration = () => {
   /*
   * app info
   */
-  const hasSetAppConfig = APP_ID && API_KEY
+  const hasSetAppConfig = Boolean(APP_ID)
   const [appUnavailable, setAppUnavailable] = useState<boolean>(false)
   const [isUnknwonReason, setIsUnknwonReason] = useState<boolean>(false)
 
@@ -463,7 +463,7 @@ const TextGeneration = () => {
   )
 
   if (appUnavailable)
-    return <AppUnavailable isUnknwonReason={isUnknwonReason} errMessage={!hasSetAppConfig ? 'Please set APP_ID and API_KEY in config/index.tsx' : ''} />
+    return <AppUnavailable isUnknwonReason={isUnknwonReason} errMessage={!hasSetAppConfig ? 'Please set NEXT_PUBLIC_APP_ID in the deployment environment' : ''} />
 
   if (!APP_INFO || !promptConfig)
     return <Loading type='app' />

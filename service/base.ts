@@ -300,7 +300,7 @@ export const upload = (fetchOptions: any): Promise<any> => {
     xhr.withCredentials = true
     xhr.onreadystatechange = function () {
       if (xhr.readyState === 4) {
-        if (xhr.status === 200)
+        if (xhr.status >= 200 && xhr.status < 300)
           resolve({ id: xhr.response })
         else
           reject(xhr)

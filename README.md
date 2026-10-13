@@ -9,8 +9,8 @@ Create a file named `.env.local` in the current directory and copy the contents 
 ```
 # APP ID
 NEXT_PUBLIC_APP_ID=
-# APP API key
-NEXT_PUBLIC_APP_KEY=
+# APP API key (server-side only)
+DIFY_API_KEY=
 # APP API URL
 NEXT_PUBLIC_API_URL=
 # APP type
