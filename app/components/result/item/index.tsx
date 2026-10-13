@@ -80,7 +80,7 @@ const GenerationItem: FC<IGenerationItemProps> = ({
   const parsedOutput = typeof content === 'string'
     ? content.split(/\r?\n/).filter(Boolean).map((line: string) => line.split('\t'))
     : []
-  const hasComplaintOutput = parsedOutput.length > 0 && parsedOutput.every((row: string[]) => row.length >= 19)
+  const hasComplaintOutput = parsedOutput.length > 0 && parsedOutput.every((row: string[]) => row.length >= 23)
   const normalOutput = typeof content === 'string' ? content : JSON.stringify(content)
   const classificationTrace = workflowProcessData?.tracing.find(node => node.node_id === 'classify' || node.title.includes('判断客诉类型'))
   const classificationRaw = classificationTrace?.outputs?.text || classificationTrace?.outputs
@@ -96,15 +96,15 @@ const GenerationItem: FC<IGenerationItemProps> = ({
   }
 
   const getConfidenceData = (row: string[]) => {
-    const firstConfidence = Number(row[8])
-    const secondConfidence = Number(row[17])
-    const gap = Number(row[18])
+    const firstConfidence = Number(row[10])
+    const secondConfidence = Number(row[21])
+    const gap = Number(row[22])
     const firstFromTrace = fallbackCandidates[0]
     const secondFromTrace = fallbackCandidates[1]
     return {
       firstType: row[1],
       firstConfidence: Number.isFinite(firstConfidence) ? firstConfidence : Number(firstFromTrace?.confidence),
-      secondType: row[10] && row[10] !== 'null' ? row[10] : secondFromTrace?.level_2,
+      secondType: row[12] && row[12] !== 'null' ? row[12] : secondFromTrace?.level_2,
       secondConfidence: Number.isFinite(secondConfidence) ? secondConfidence : Number(secondFromTrace?.confidence),
       gap: Number.isFinite(gap)
         ? gap
@@ -198,8 +198,8 @@ const GenerationItem: FC<IGenerationItemProps> = ({
                         {parsedOutput.map((row: string[], index: number) => {
                           const { firstType, firstConfidence, secondType, secondConfidence, gap } = getConfidenceData(row)
                           const candidates = [
-                            { title: firstType, confidence: firstConfidence, values: row.slice(0, 8), accent: 'border-gray-200 bg-white', tone: 'text-gray-800' },
-                            { title: secondType || row[10], confidence: secondConfidence, values: row.slice(9, 17), accent: 'border-indigo-200 bg-indigo-50/40', tone: 'text-indigo-900' },
+                            { title: firstType, confidence: firstConfidence, values: row.slice(0, 10), accent: 'border-gray-200 bg-white', tone: 'text-gray-800' },
+                            { title: secondType || row[12], confidence: secondConfidence, values: row.slice(11, 21), accent: 'border-indigo-200 bg-indigo-50/40', tone: 'text-indigo-900' },
                           ]
                           const warnings = []
                           if (Number.isFinite(firstConfidence) && firstConfidence < 0.70)

@@ -1,5 +1,5 @@
 import type { FC } from 'react'
-import React from 'react'
+import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   PlayIcon,
@@ -28,6 +28,7 @@ const RunOnce: FC<IRunOnceProps> = ({
   onVisionFilesChange,
 }) => {
   const { t } = useTranslation()
+  const [clearVersion, setClearVersion] = useState(0)
 
   const onClear = () => {
     const newInputs: Record<string, any> = {}
@@ -35,6 +36,8 @@ const RunOnce: FC<IRunOnceProps> = ({
       newInputs[item.key] = ''
     })
     onInputsChange(newInputs)
+    onVisionFilesChange([])
+    setClearVersion(version => version + 1)
   }
 
   return (
@@ -85,6 +88,7 @@ const RunOnce: FC<IRunOnceProps> = ({
                 )}
                 {item.type === 'file-list' && (
                   <TextGenerationImageUploader
+                    key={`${item.key}-${clearVersion}`}
                     settings={{
                       enabled: true,
                       number_limits: item.number_limits || 20,
@@ -112,6 +116,7 @@ const RunOnce: FC<IRunOnceProps> = ({
                 <div className="text-gray-900 text-sm font-medium">{t('common.imageUploader.imageUpload')}</div>
                 <div className='mt-2'>
                   <TextGenerationImageUploader
+                    key={`vision-${clearVersion}`}
                     settings={visionConfig}
                     onFilesChange={files => onVisionFilesChange(files.filter(file => file.progress !== -1).map(fileItem => ({
                       type: 'image',
