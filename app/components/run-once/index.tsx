@@ -16,6 +16,7 @@ export type IRunOnceProps = {
   inputs: Record<string, any>
   onInputsChange: (inputs: Record<string, any>) => void
   onSend: () => void
+  isSending: boolean
   visionConfig: VisionSettings
   onVisionFilesChange: (files: VisionFile[]) => void
 }
@@ -24,6 +25,7 @@ const RunOnce: FC<IRunOnceProps> = ({
   inputs,
   onInputsChange,
   onSend,
+  isSending,
   visionConfig,
   onVisionFilesChange,
 }) => {
@@ -145,7 +147,7 @@ const RunOnce: FC<IRunOnceProps> = ({
                 type="primary"
                 className='!h-8 !pl-3 !pr-4'
                 onClick={onSend}
-                disabled={false}
+                disabled={isSending}
               >
                 <PlayIcon className="shrink-0 w-4 h-4 mr-1" aria-hidden="true" />
                 <span className='text-[13px]'>{t('app.generation.run')}</span>

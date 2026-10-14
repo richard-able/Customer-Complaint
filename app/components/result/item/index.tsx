@@ -77,14 +77,20 @@ const GenerationItem: FC<IGenerationItemProps> = ({
   const { t } = useTranslation()
   const isTop = depth === 1
 
-  const parsedOutput = typeof content === 'string'
-    ? content.split(/\r?\n/).filter(Boolean).map((line: string) => line.split('\t'))
+  const resultText = typeof content === 'string'
+    ? content
+    : typeof content?.result_tsv === 'string'
+      ? content.result_tsv
+      : null
+  const parsedOutput = resultText
+    ? resultText.split(/\r?\n/).filter(Boolean).map((line: string) => line.split('\t'))
     : []
-  const hasComplaintOutput = parsedOutput.length > 0 && parsedOutput.every((row: string[]) => row.length >= 23)
+  const complaintRows = parsedOutput.filter((row: string[]) => row.length >= 23)
+  const hasComplaintOutput = complaintRows.length > 0
   const normalOutput = typeof content === 'string' ? content : JSON.stringify(content)
   const classificationTrace = workflowProcessData?.tracing.find(node => node.node_id === 'classify' || node.title.includes('判断客诉类型'))
   const classificationRaw = classificationTrace?.outputs?.text || classificationTrace?.outputs
-  let fallbackCandidates: Array<{ level_2?: string; confidence?: number }> = []
+  let fallbackCandidates: Array<{ confidence?: number }> = []
   if (classificationRaw) {
     try {
       const parsed = typeof classificationRaw === 'string' ? JSON.parse(classificationRaw) : classificationRaw
@@ -96,15 +102,14 @@ const GenerationItem: FC<IGenerationItemProps> = ({
   }
 
   const getConfidenceData = (row: string[]) => {
-    const firstConfidence = Number(row[10])
-    const secondConfidence = Number(row[21])
-    const gap = Number(row[22])
+    const hasExtendedFields = row.length >= 27
+    const firstConfidence = Number(row[hasExtendedFields ? 12 : 10])
+    const secondConfidence = Number(row[hasExtendedFields ? 25 : 21])
+    const gap = Number(row[hasExtendedFields ? 26 : 22])
     const firstFromTrace = fallbackCandidates[0]
     const secondFromTrace = fallbackCandidates[1]
     return {
-      firstType: row[1],
       firstConfidence: Number.isFinite(firstConfidence) ? firstConfidence : Number(firstFromTrace?.confidence),
-      secondType: row[12] && row[12] !== 'null' ? row[12] : secondFromTrace?.level_2,
       secondConfidence: Number.isFinite(secondConfidence) ? secondConfidence : Number(secondFromTrace?.confidence),
       gap: Number.isFinite(gap)
         ? gap
@@ -191,15 +196,18 @@ const GenerationItem: FC<IGenerationItemProps> = ({
                 {isError && (
                   <div className='text-gray-400 text-sm'>{t('app.generation.batchFailed.outputPlaceholder')}</div>
                 )}
-                {!isError && (typeof content === 'string') && (
+                {!isError && resultText !== null && (
                   hasComplaintOutput
                     ? (
                       <div className='space-y-4'>
-                        {parsedOutput.map((row: string[], index: number) => {
-                          const { firstType, firstConfidence, secondType, secondConfidence, gap } = getConfidenceData(row)
+                        {complaintRows.map((row: string[], index: number) => {
+                          const { firstConfidence, secondConfidence, gap } = getConfidenceData(row)
+                          const hasExtendedFields = row.length >= 27
+                          const candidateFieldCount = hasExtendedFields ? 12 : 10
+                          const secondCandidateStart = hasExtendedFields ? 13 : 11
                           const candidates = [
-                            { title: firstType, confidence: firstConfidence, values: row.slice(0, 10), accent: 'border-gray-200 bg-white', tone: 'text-gray-800' },
-                            { title: secondType || row[12], confidence: secondConfidence, values: row.slice(11, 21), accent: 'border-indigo-200 bg-indigo-50/40', tone: 'text-indigo-900' },
+                            { confidence: firstConfidence, values: row.slice(0, candidateFieldCount), accent: 'border-indigo-300 bg-indigo-100/60', tone: 'text-indigo-950' },
+                            { confidence: secondConfidence, values: row.slice(secondCandidateStart, secondCandidateStart + candidateFieldCount), accent: 'border-gray-200 bg-gray-50', tone: 'text-gray-500' },
                           ]
                           const warnings = []
                           if (Number.isFinite(firstConfidence) && firstConfidence < 0.70)
@@ -209,46 +217,45 @@ const GenerationItem: FC<IGenerationItemProps> = ({
 
                           return (
                             <div key={index} className='space-y-3'>
-                              <div className='space-y-3'>
-                                {candidates.map((candidate, candidateIndex) => (
-                                  <section key={candidateIndex} className={`overflow-hidden rounded-lg border ${candidate.accent}`}>
-                                    <div className='flex items-center justify-between border-b border-inherit px-4 py-3'>
-                                      <div className={`font-semibold ${candidate.tone}`}>
-                                        <div className='text-xs font-medium opacity-70'>第{candidateIndex + 1}名</div>
-                                        <div className='mt-0.5 text-sm'>{candidate.title && candidate.title !== 'null' ? candidate.title : '未提供候选'}</div>
-                                      </div>
-                                      <div className='flex items-center gap-3'>
-                                        <span className={`text-sm font-semibold ${candidate.tone}`}>置信度：{Number.isFinite(candidate.confidence) ? `${(candidate.confidence * 100).toFixed(1)}%` : '未提供'}</span>
-                                        <SimpleBtn className='space-x-1' onClick={() => {
-                                          copy(toTsv(candidate.values), { format: 'text/plain' })
-                                          Toast.notify({ type: 'success', message: t('common.actionMsg.copySuccessfully') })
-                                        }}>
-                                          <Clipboard className='w-3.5 h-3.5' />
-                                          <div>{t('common.operation.copy')}</div>
-                                        </SimpleBtn>
-                                      </div>
-                                    </div>
-                                    <pre
-                                      className={`overflow-auto whitespace-pre-wrap break-words px-4 py-3 text-sm leading-6 ${candidate.tone}`}
-                                      style={{ tabSize: 4 }}
-                                    >{toTsv(candidate.values)}</pre>
-                                  </section>
-                                ))}
-                              </div>
                               {warnings.length > 0 && (
                                 <section className='rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900'>
                                   <div className='mb-1 font-semibold'>预警</div>
                                   {warnings.map(warning => <div key={warning}>{warning}</div>)}
                                 </section>
                               )}
+                              <div className='space-y-3'>
+                                {candidates.map((candidate, candidateIndex) => {
+                                  const confidenceText = Number.isFinite(candidate.confidence) ? `${(candidate.confidence * 100).toFixed(1)}%` : '未提供'
+                                  return (
+                                    <section key={candidateIndex} className={`overflow-hidden rounded-lg border ${candidate.accent}`}>
+                                      <div className='flex items-center justify-between border-b border-inherit px-4 py-3'>
+                                        <div className={`font-semibold ${candidate.tone}`}>
+                                          <div className='text-xs font-medium opacity-70'>{candidateIndex === 0 ? '主候选' : '第二候选'}</div>
+                                        </div>
+                                        <div className='flex items-center gap-3'>
+                                          <span className={`text-sm font-semibold ${candidate.tone}`}>置信度：{confidenceText}</span>
+                                          <SimpleBtn className='space-x-1' onClick={() => {
+                                            copy(toTsv([...candidate.values, confidenceText]), { format: 'text/plain' })
+                                            Toast.notify({ type: 'success', message: t('common.actionMsg.copySuccessfully') })
+                                          }}>
+                                            <Clipboard className='w-3.5 h-3.5' />
+                                            <div>{t('common.operation.copy')}</div>
+                                          </SimpleBtn>
+                                        </div>
+                                      </div>
+                                      <pre className={`overflow-auto whitespace-pre-wrap break-words px-4 py-3 text-sm leading-6 ${candidate.tone}`}>{candidate.values.join('\n')}</pre>
+                                    </section>
+                                  )
+                                })}
+                              </div>
                             </div>
                           )
                         })}
                       </div>
                     )
-                    : <Markdown content={content} />
+                    : <Markdown content={resultText} />
                 )}
-                {!isError && (typeof content !== 'string') && (
+                {!isError && resultText === null && (
                   <CodeEditor
                     readOnly
                     title={<div />}

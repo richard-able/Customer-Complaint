@@ -28,6 +28,7 @@ const translation = {
   },
   imageUploader: {
     uploadFromComputer: '从本地上传',
+    uploading: '正在上传 {{progress}}%',
     uploadFromComputerReadError: '图片读取失败，请重新选择。',
     uploadFromComputerUploadError: '图片上传失败，请重新上传。',
     uploadFromComputerLimit: '上传图片不能超过 {{size}} MB',

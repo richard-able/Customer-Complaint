@@ -1,7 +1,7 @@
 'use client'
 
 import type { ChangeEvent, FC } from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { imageUpload } from './utils'
 import type { ImageFile } from '@/types/app'
@@ -24,8 +24,23 @@ const Uploader: FC<UploaderProps> = ({
   enablePaste = false,
 }) => {
   const [hovering, setHovering] = useState(false)
+  const progressTimers = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
   const { notify } = Toast
   const { t } = useTranslation()
+
+  const stopProgress = (imageId: string) => {
+    const timer = progressTimers.current.get(imageId)
+    if (timer)
+      clearInterval(timer)
+    progressTimers.current.delete(imageId)
+  }
+
+  useEffect(() => {
+    return () => {
+      progressTimers.current.forEach(timer => clearInterval(timer))
+      progressTimers.current.clear()
+    }
+  }, [])
 
   const handleFile = (file: File) => {
     if (limit && file.size > limit * 1024 * 1024) {
@@ -33,31 +48,47 @@ const Uploader: FC<UploaderProps> = ({
       return
     }
 
+    const imageFile: ImageFile = {
+      type: TransferMethod.local_file,
+      _id: `${Date.now()}`,
+      fileId: '',
+      file,
+      url: '',
+      progress: 0,
+    }
+    onUpload(imageFile)
+    let simulatedProgress = 0
+    let imageWithPreview = imageFile
+    const progressTimer = setInterval(() => {
+      simulatedProgress = Math.min(simulatedProgress + (simulatedProgress < 70 ? 2 : 1), 92)
+      onUpload({ ...imageWithPreview, progress: simulatedProgress })
+    }, 250)
+    progressTimers.current.set(imageFile._id, progressTimer)
+
     const reader = new FileReader()
     reader.addEventListener(
       'load',
       () => {
-        const imageFile = {
-          type: TransferMethod.local_file,
-          _id: `${Date.now()}`,
-          fileId: '',
-          file,
+        imageWithPreview = {
+          ...imageFile,
           url: reader.result as string,
           base64Url: reader.result as string,
-          progress: 0,
         }
-        onUpload(imageFile)
+        onUpload(imageWithPreview)
         imageUpload({
-          file: imageFile.file,
+          file,
           onProgressCallback: (progress) => {
-            onUpload({ ...imageFile, progress })
+            simulatedProgress = Math.max(simulatedProgress, Math.min(progress, 92))
+            onUpload({ ...imageWithPreview, progress: simulatedProgress })
           },
           onSuccessCallback: (res) => {
-            onUpload({ ...imageFile, fileId: res.id, progress: 100 })
+            stopProgress(imageFile._id)
+            onUpload({ ...imageWithPreview, fileId: res.id, progress: 100 })
           },
           onErrorCallback: () => {
+            stopProgress(imageFile._id)
             notify({ type: 'error', message: t('common.imageUploader.uploadFromComputerUploadError') })
-            onUpload({ ...imageFile, progress: -1 })
+            onUpload({ ...imageWithPreview, progress: -1 })
           },
         })
       },
@@ -66,7 +97,9 @@ const Uploader: FC<UploaderProps> = ({
     reader.addEventListener(
       'error',
       () => {
+        stopProgress(imageFile._id)
         notify({ type: 'error', message: t('common.imageUploader.uploadFromComputerReadError') })
+        onUpload({ ...imageFile, progress: -1 })
       },
       false,
     )

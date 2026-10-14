@@ -28,6 +28,7 @@ const translation = {
   },
   imageUploader: {
     uploadFromComputer: 'Upload from Computer',
+    uploading: 'Uploading {{progress}}%',
     uploadFromComputerReadError: 'Image reading failed, please try again.',
     uploadFromComputerUploadError: 'Image upload failed, please upload again.',
     uploadFromComputerLimit: 'Upload images cannot exceed {{size}} MB',

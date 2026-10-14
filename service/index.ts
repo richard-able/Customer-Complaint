@@ -22,11 +22,13 @@ export const sendWorkflowMessage = async (
     onNodeStarted,
     onNodeFinished,
     onWorkflowFinished,
+    onError,
   }: {
     onWorkflowStarted: IOnWorkflowStarted
     onNodeStarted: IOnNodeStarted
     onNodeFinished: IOnNodeFinished
     onWorkflowFinished: IOnWorkflowFinished
+    onError?: IOnError
   },
 ) => {
   return ssePost('workflows/run', {
@@ -34,7 +36,7 @@ export const sendWorkflowMessage = async (
       ...body,
       response_mode: 'streaming',
     },
-  }, { onNodeStarted, onWorkflowStarted, onWorkflowFinished, onNodeFinished })
+  }, { onNodeStarted, onWorkflowStarted, onWorkflowFinished, onNodeFinished, onError })
 }
 
 export const fetchAppParams = async () => {

@@ -27,7 +27,8 @@ export type IResultProps = {
   controlStopResponding?: number
   onShowRes: () => void
   taskId?: number
-  onCompleted: (completionRes: string, taskId?: number, success?: boolean) => void
+  onCompleted: (completionRes: string, taskId?: number, success?: boolean, failureReason?: string) => void
+  onResponsingChange?: (isResponsing: boolean, taskId?: number) => void
   visionConfig: VisionSettings
   completionFiles: VisionFile[]
 }
@@ -46,14 +47,19 @@ const Result: FC<IResultProps> = ({
   onShowRes,
   taskId,
   onCompleted,
+  onResponsingChange,
   visionConfig,
   completionFiles,
 }) => {
   const [isResponsing, { setTrue: setResponsingTrue, setFalse: setResponsingFalse }] = useBoolean(false)
+  const lastControlSendRef = useRef<number | undefined>(undefined)
+  const lastControlRetryRef = useRef<number | undefined>(undefined)
   useEffect(() => {
-    if (controlStopResponding)
+    if (controlStopResponding) {
       setResponsingFalse()
-  }, [controlStopResponding])
+      onResponsingChange?.(false, taskId)
+    }
+  }, [controlStopResponding, onResponsingChange, taskId])
 
   const [completionRes, doSetCompletionRes] = useState('')
   const completionResRef = useRef('')
@@ -92,6 +98,11 @@ const Result: FC<IResultProps> = ({
     if (isCallBatchAPI)
       return true
 
+    if (completionFiles.find(item => item.transfer_method === TransferMethod.local_file && !item.upload_file_id)) {
+      notify({ type: 'info', message: t('appDebug.errorMessage.waitForImgUpload') })
+      return false
+    }
+
     const prompt_variables = promptConfig?.prompt_variables
     if (!prompt_variables || prompt_variables?.length === 0)
       return true
@@ -112,10 +123,6 @@ const Result: FC<IResultProps> = ({
 
     if (hasEmptyInput) {
       logError(t('appDebug.errorMessage.valueOfVarRequired', { key: hasEmptyInput }))
-      return false
-    }
-    if (completionFiles.find(item => item.transfer_method === TransferMethod.local_file && !item.upload_file_id)) {
-      notify({ type: 'info', message: t('appDebug.errorMessage.waitForImgUpload') })
       return false
     }
     if (prompt_variables.some(({ type, key }) => type === 'file-list' && (inputs[key] || []).some((file: VisionFile) => file.transfer_method === TransferMethod.local_file && !file.upload_file_id))) {
@@ -162,13 +169,15 @@ const Result: FC<IResultProps> = ({
       onShowRes()
 
     setResponsingTrue()
+    onResponsingChange?.(true, taskId)
     let isEnd = false
     let isTimeout = false;
     (async () => {
       await sleep(1000 * 60) // 1min timeout
       if (!isEnd) {
         setResponsingFalse()
-        onCompleted(getCompletionRes(), taskId, false)
+        onResponsingChange?.(false, taskId)
+        onCompleted(getCompletionRes(), taskId, false, '任务超时（超过 1 分钟）')
         isTimeout = true
       }
     })()
@@ -184,7 +193,6 @@ const Result: FC<IResultProps> = ({
               tracing: [],
               expand: false,
             })
-            setResponsingFalse()
           },
           onNodeStarted: ({ data }) => {
             setWorkflowProccessData(produce(getWorkflowProccessData()!, (draft) => {
@@ -216,7 +224,8 @@ const Result: FC<IResultProps> = ({
             if (data.error) {
               notify({ type: 'error', message: data.error })
               setResponsingFalse()
-              onCompleted(getCompletionRes(), taskId, false)
+              onResponsingChange?.(false, taskId)
+              onCompleted(getCompletionRes(), taskId, false, data.error)
               isEnd = true
               return
             }
@@ -230,8 +239,18 @@ const Result: FC<IResultProps> = ({
             else
               setCompletionRes(data.outputs[Object.keys(data.outputs)[0]])
             setResponsingFalse()
+            onResponsingChange?.(false, taskId)
             setMessageId(tempMessageId)
             onCompleted(getCompletionRes(), taskId, true)
+            isEnd = true
+          },
+          onError: (error) => {
+            if (isTimeout)
+              return
+
+            setResponsingFalse()
+            onResponsingChange?.(false, taskId)
+            onCompleted(getCompletionRes(), taskId, false, error || '工作流请求失败')
             isEnd = true
           },
         },
@@ -249,16 +268,18 @@ const Result: FC<IResultProps> = ({
             return
 
           setResponsingFalse()
+          onResponsingChange?.(false, taskId)
           setMessageId(tempMessageId)
           onCompleted(getCompletionRes(), taskId, true)
           isEnd = true
         },
-        onError() {
+        onError(error) {
           if (isTimeout)
             return
 
           setResponsingFalse()
-          onCompleted(getCompletionRes(), taskId, false)
+          onResponsingChange?.(false, taskId)
+          onCompleted(getCompletionRes(), taskId, false, error || '流式请求失败')
           isEnd = true
         },
       })
@@ -266,13 +287,17 @@ const Result: FC<IResultProps> = ({
   }
 
   useEffect(() => {
-    if (controlSend)
+    if (controlSend && lastControlSendRef.current !== controlSend) {
+      lastControlSendRef.current = controlSend
       handleSend()
+    }
   }, [controlSend])
 
   useEffect(() => {
-    if (controlRetry)
+    if (controlRetry && lastControlRetryRef.current !== controlRetry) {
+      lastControlRetryRef.current = controlRetry
       handleSend()
+    }
   }, [controlRetry])
 
   const renderTextGenerationRes = () => (

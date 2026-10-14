@@ -49,34 +49,32 @@ const ImageList: FC<ImageListProps> = ({
           >
             {
               item.type === TransferMethod.local_file && item.progress !== 100 && (
-                <>
-                  <div
-                    className='absolute inset-0 flex items-center justify-center z-[1] bg-black/30'
-                    style={{ left: item.progress > -1 ? `${item.progress}%` : 0 }}
-                  >
-                    {
-                      item.progress === -1 && (
-                        <RefreshCcw01 className='w-5 h-5 text-white' onClick={() => onReUpload && onReUpload(item._id)} />
-                      )
-                    }
-                  </div>
+                <div className='absolute inset-0 z-[1] flex flex-col items-center justify-center gap-1 rounded-lg bg-gray-200/95 text-gray-600' role='status' aria-live='polite'>
                   {
-                    item.progress > -1 && (
-                      <span className='absolute top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] text-sm text-white mix-blend-lighten z-[1]'>{item.progress}%</span>
-                    )
+                    item.progress === -1
+                      ? <RefreshCcw01 className='w-5 h-5 cursor-pointer' onClick={() => onReUpload && onReUpload(item._id)} />
+                      : (
+                        <>
+                          <Loading02 className='w-5 h-5 animate-spin' />
+                          <span className='text-[10px] font-medium'>{t('common.imageUploader.uploading', { progress: item.progress })}</span>
+                          <div className='h-1 w-10 overflow-hidden rounded-full bg-gray-300'>
+                            <div className='h-full rounded-full bg-blue-600 transition-all duration-300' style={{ width: `${item.progress}%` }} />
+                          </div>
+                        </>
+                      )
                   }
-                </>
+                </div>
               )
             }
             {
               item.type === TransferMethod.remote_url && item.progress !== 100 && (
                 <div className={`
                   absolute inset-0 flex items-center justify-center rounded-lg z-[1] border
-                  ${item.progress === -1 ? 'bg-[#FEF0C7] border-[#DC6803]' : 'bg-black/[0.16] border-transparent'}
+                  ${item.progress === -1 ? 'bg-[#FEF0C7] border-[#DC6803]' : 'bg-gray-200/95 border-transparent'}
                 `}>
                   {
                     item.progress > -1 && (
-                      <Loading02 className='animate-spin w-5 h-5 text-white' />
+                      <Loading02 className='animate-spin w-5 h-5 text-gray-600' />
                     )
                   }
                   {

@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 import cn from 'classnames'
@@ -25,6 +26,7 @@ const WorkflowProcessItem = ({
   hideInfo = false,
 }: WorkflowProcessProps) => {
   const [collapse, setCollapse] = useState(!expand)
+  const nodeListRef = useRef<HTMLDivElement>(null)
   const running = data.status === WorkflowRunningStatus.Running
   const succeeded = data.status === WorkflowRunningStatus.Succeeded
   const failed = data.status === WorkflowRunningStatus.Failed || data.status === WorkflowRunningStatus.Stopped
@@ -43,6 +45,12 @@ const WorkflowProcessItem = ({
   useEffect(() => {
     setCollapse(!expand)
   }, [expand])
+
+  useEffect(() => {
+    if (collapse || !nodeListRef.current)
+      return
+    nodeListRef.current.scrollTop = nodeListRef.current.scrollHeight
+  }, [collapse, data.tracing])
 
   return (
     <div
@@ -83,7 +91,7 @@ const WorkflowProcessItem = ({
       </div>
       {
         !collapse && (
-          <div className='mt-1.5'>
+          <div ref={nodeListRef} className='mt-1.5 h-60 overflow-y-auto overscroll-contain pr-1'>
             {
               data.tracing.map(node => (
                 <div key={node.id} className='mb-0.5 last-of-type:mb-0'>
