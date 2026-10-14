@@ -161,6 +161,8 @@ const Result: FC<IResultProps> = ({
       rating: null,
     })
     setCompletionRes('')
+    workflowProcessDataRef.current = undefined
+    doSetWorkflowProccessData(undefined)
 
     const res: string[] = []
     let tempMessageId = ''
@@ -321,7 +323,7 @@ const Result: FC<IResultProps> = ({
   return (
     <div className={cn(isNoData && !isCallBatchAPI && 'h-full')}>
       {!isCallBatchAPI && (
-        (isResponsing && !completionRes)
+        (isResponsing && !completionRes && !workflowProcessData)
           ? (
             <div className='flex h-full w-full justify-center items-center'>
               <Loading type='area' />
