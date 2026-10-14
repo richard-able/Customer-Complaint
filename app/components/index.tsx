@@ -265,7 +265,7 @@ const TextGeneration = () => {
     res['失败原因'] = task.status === TaskStatus.failed ? (task.failureReason || '任务执行失败') : ''
     return res
   })
-  const checkBatchInputs = (data: string[][]) => {
+  const checkBatchInputs = (data: string[][], embeddedImages: EmbeddedImagesByCell) => {
     if (!data || data.length === 0) {
       notify({ type: 'error', message: t('app.generation.errorMsg.empty') })
       return false
@@ -333,17 +333,24 @@ const TextGeneration = () => {
           return
         if (varItem.type === 'string') {
           const maxLen = varItem.max_length || DEFAULT_VALUE_MAX_LEN
-          if (item[varIndex].length > maxLen) {
+          if ((item[varIndex] || '').length > maxLen) {
             moreThanMaxLengthVarName = varItem.name
             maxLength = maxLen
             errorRowIndex = index + 1
             return
           }
         }
+        if (varItem.type === 'file-list') {
+          if (embeddedImages[index]?.[varIndex]?.length || varItem.required === false)
+            return
+          requiredVarName = varItem.name
+          errorRowIndex = index + 1
+          return
+        }
         if (varItem.required === false)
           return
 
-        if (item[varIndex].trim() === '') {
+        if ((item[varIndex] || '').trim() === '') {
           requiredVarName = varItem.name
           errorRowIndex = index + 1
         }
@@ -362,8 +369,8 @@ const TextGeneration = () => {
     return true
   }
 
-  const handleRunBatch = async (data: string[][], embeddedImages: EmbeddedImagesByCell, selectedImages: File[]) => {
-    if (!checkBatchInputs(data))
+  const handleRunBatch = async (data: string[][], embeddedImages: EmbeddedImagesByCell) => {
+    if (!checkBatchInputs(data, embeddedImages))
       return
     if (!allTaskFinished || isResponsingRef.current || isPreparingBatchRef.current || (isCallBatchAPI && !allTaskRuned)) {
       notify({ type: 'info', message: t('appDebug.errorMessage.waitForBatchResponse') })
@@ -375,22 +382,7 @@ const TextGeneration = () => {
     const fileVariables = (promptConfig?.prompt_variables || [])
       .map((variable, index) => ({ variable, index }))
       .filter(({ variable }) => variable.type === 'file-list')
-    const selectedImagesByName = new Map(selectedImages.map(file => [file.name, file]))
-    const imageFilesByRow = payloadData.map((row, rowIndex) => fileVariables.flatMap(({ index }) => {
-      const embeddedCellImages = embeddedImages[rowIndex]?.[index] || []
-      if (embeddedCellImages.length > 0)
-        return embeddedCellImages
-      return (row[index] || '').split(/[;；\n]/).map(name => selectedImagesByName.get(name.trim())).filter((image): image is File => Boolean(image))
-    }))
-    const missingImageNames = [...new Set(payloadData.flatMap((row, rowIndex) => fileVariables.flatMap(({ index }) => {
-      if ((embeddedImages[rowIndex]?.[index] || []).length > 0)
-        return []
-      return (row[index] || '').split(/[;；\n]/).map(name => name.trim()).filter(name => name && !selectedImagesByName.has(name))
-    })))]
-    if (missingImageNames.length > 0) {
-      notify({ type: 'error', message: t('app.generation.errorMsg.batchImagesMissing', { names: missingImageNames.join(', ') }) })
-      return
-    }
+    const imageFilesByRow = payloadData.map((_, rowIndex) => fileVariables.flatMap(({ index }) => embeddedImages[rowIndex]?.[index] || []))
 
     isPreparingBatchRef.current = true
     setIsPreparingBatch(true)
@@ -418,9 +410,7 @@ const TextGeneration = () => {
           item.slice(0, varLen).forEach((input, index) => {
             const variable = promptConfig?.prompt_variables[index]
             if (variable?.type === 'file-list') {
-              const files = embeddedImages[i]?.[index]?.length
-                ? embeddedImages[i][index]
-                : (input || '').split(/[;；\n]/).map(name => selectedImagesByName.get(name.trim())).filter((image): image is File => Boolean(image))
+              const files = embeddedImages[i]?.[index] || []
               inputs[variable.key] = files.map(file => ({
                 type: 'image',
                 transfer_method: TransferMethod.local_file,
@@ -686,7 +676,6 @@ const TextGeneration = () => {
             </div>
             {isInBatchTab && (
               <RunBatch
-                vars={promptConfig.prompt_variables.map(item => ({ name: item.name }))}
                 onSend={handleRunBatch}
                 isAllFinished={allTaskFinished && !isResponsing && !isPreparingBatch && (!isCallBatchAPI || allTaskRuned)}
                 isPreparingImages={isPreparingBatch}
