@@ -1,5 +1,5 @@
 import type { FC } from 'react'
-import { memo } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { BlockEnum } from '@/types/app'
 import {
   Answer,
@@ -55,6 +55,7 @@ const ICON_CONTAINER_BG_COLOR_MAP: Record<string, string> = {
   [BlockEnum.QuestionClassifier]: 'bg-[#16B364]',
   [BlockEnum.TemplateTransform]: 'bg-[#2E90FA]',
   [BlockEnum.VariableAssigner]: 'bg-[#2E90FA]',
+  [BlockEnum.Tool]: 'bg-[#2E90FA]',
 }
 const BlockIcon: FC<BlockIconProps> = ({
   type,
@@ -62,32 +63,39 @@ const BlockIcon: FC<BlockIconProps> = ({
   className,
   toolIcon,
 }) => {
+  const [toolIconFailed, setToolIconFailed] = useState(false)
+  const toolIconUrl = typeof toolIcon === 'string' ? toolIcon : undefined
+
+  useEffect(() => {
+    setToolIconFailed(false)
+  }, [toolIconUrl])
+
   return (
     <div className={`
       flex items-center justify-center border-[0.5px] border-white/[0.02] text-white
       ${ICON_CONTAINER_CLASSNAME_SIZE_MAP[size]} 
       ${ICON_CONTAINER_BG_COLOR_MAP[type]}
-      ${toolIcon && '!shadow-none'}
+      ${toolIconUrl && !toolIconFailed && '!shadow-none'}
       ${className}
     `}
     >
       {
-        type !== BlockEnum.Tool && (
+        (type !== BlockEnum.Tool || !toolIcon || toolIconFailed) && (
           getIcon(type, size === 'xs' ? 'w-3 h-3' : 'w-3.5 h-3.5')
         )
       }
       {
-        type === BlockEnum.Tool && toolIcon && (
+        type === BlockEnum.Tool && toolIcon && !toolIconFailed && (
           <>
             {
-              typeof toolIcon === 'string'
+              toolIconUrl
                 ? (
-                  <div
-                    className='shrink-0 w-full h-full bg-cover bg-center rounded-md'
-                    style={{
-                      backgroundImage: `url(${toolIcon})`,
-                    }}
-                  ></div>
+                  <img
+                    src={toolIconUrl}
+                    alt=''
+                    className='shrink-0 w-full h-full object-cover rounded-md'
+                    onError={() => setToolIconFailed(true)}
+                  />
                 )
                 : (
                   <AppIcon
