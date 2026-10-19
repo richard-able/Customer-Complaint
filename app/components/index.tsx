@@ -1,9 +1,11 @@
 'use client'
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import cn from 'classnames'
 import { useBoolean, useClickAway } from 'ahooks'
 import { XMarkIcon } from '@heroicons/react/24/outline'
+import ChevronRightIcon from '@/app/components/base/icons/line/arrows/ChevronRight'
+import ImagePreview from '@/app/components/base/image-uploader/image-preview'
 import RunOnce from './run-once'
 import RunBatch from './run-batch'
 import ResDownload from './run-batch/res-download'
@@ -25,7 +27,11 @@ import { userInputsFormToPromptVariables } from '@/utils/prompt'
 import { imageUpload } from '@/app/components/base/image-uploader/utils'
 import type { EmbeddedImagesByCell } from './run-batch/parse-xlsx'
 
-const GROUP_SIZE = 5 // to avoid RPM(Request per minute) limit. The group task finished then the next group.
+// 并发上限：同一时刻最多执行的任务数，默认 5（避免触发 Dify 的 RPM 限制），可用 NEXT_PUBLIC_MAX_CONCURRENT 覆盖。
+const MAX_CONCURRENT = Math.max(1, Number(process.env.NEXT_PUBLIC_MAX_CONCURRENT) || 5)
+// 历史最多保留的任务条数，避免 localStorage 无限膨胀。
+const MAX_HISTORY_TASKS = 100
+const HISTORY_STORAGE_KEY = 'customer-complaint.task-history.v1'
 enum TaskStatus {
   pending = 'pending',
   running = 'running',
@@ -33,8 +39,11 @@ enum TaskStatus {
   failed = 'failed',
 }
 
+type TaskSource = 'create' | 'batch'
+
 type TaskParam = {
   inputs: Record<string, any>
+  files?: VisionFile[]
 }
 
 type Task = {
@@ -43,7 +52,117 @@ type Task = {
   retryToken?: number
   status: TaskStatus
   failureReason?: string
+  createdAt: number
+  customerId: string
+  source: TaskSource
+  /** 截图缩略图（data url，仅用于右侧历史标题展示，不参与请求） */
+  thumbnails?: string[]
+  /** 放大查看用的图片（data url，比缩略图大，同样不参与请求） */
+  previews?: string[]
+  screenshotCount?: number
   params: TaskParam
+}
+
+type PersistedHistory = {
+  version: 1
+  nextTaskId: number
+  tasks: Task[]
+  results: Record<string, any>
+}
+
+// 从工作流变量里取“客户ID”列，取不到时退回第一个非文件类变量（与导出逻辑一致）
+const resolveCustomerIdVariable = (promptConfig: PromptConfig | null) =>
+  promptConfig?.prompt_variables.find(variable => variable.name.trim() === '客户ID')
+  || promptConfig?.prompt_variables.find(variable => variable.type !== 'file-list')
+
+const buildCustomerId = (inputs: Record<string, any>, promptConfig: PromptConfig | null) => {
+  const variable = resolveCustomerIdVariable(promptConfig)
+  if (!variable)
+    return ''
+  const value = inputs?.[variable.key]
+  return Array.isArray(value) ? '' : String(value ?? '').trim()
+}
+
+const THUMBNAIL_MAX_SIZE = 96
+const THUMBNAIL_LIMIT = 3
+const THUMBNAIL_KEEP_TASKS = 30
+const PREVIEW_MAX_SIZE = 720
+const PREVIEW_LIMIT = 2
+const PREVIEW_KEEP_TASKS = 8
+
+// 生成缩放宽高后的 data url 图片，只用于右侧展示，不进入请求体
+const createScaledImage = (dataUrl: string, maxSize: number, quality: number) => new Promise<string>((resolve) => {
+  if (!dataUrl || typeof document === 'undefined') {
+    resolve('')
+    return
+  }
+  const image = new Image()
+  image.onload = () => {
+    try {
+      const naturalWidth = image.naturalWidth || 1
+      const naturalHeight = image.naturalHeight || 1
+      const scale = Math.min(1, maxSize / Math.max(naturalWidth, naturalHeight))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(naturalWidth * scale))
+      canvas.height = Math.max(1, Math.round(naturalHeight * scale))
+      const context = canvas.getContext('2d')
+      if (!context) {
+        resolve('')
+        return
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    catch {
+      resolve('')
+    }
+  }
+  image.onerror = () => resolve('')
+  image.src = dataUrl
+})
+
+const createThumbnail = (dataUrl: string) => createScaledImage(dataUrl, THUMBNAIL_MAX_SIZE, 0.6)
+
+const buildThumbnails = async (dataUrls: string[]) => {
+  const targets = dataUrls.filter(Boolean).slice(0, THUMBNAIL_LIMIT)
+  const thumbnails = await Promise.all(targets.map(createThumbnail))
+  return thumbnails.filter(Boolean)
+}
+
+// 一次产出缩略图（列表用）和放大图（点击查看用）
+const buildTaskImages = async (dataUrls: string[]) => {
+  const targets = dataUrls.filter(Boolean)
+  if (targets.length === 0)
+    return { thumbnails: [] as string[], previews: [] as string[] }
+  const previews = (await Promise.all(targets.slice(0, PREVIEW_LIMIT).map(dataUrl => createScaledImage(dataUrl, PREVIEW_MAX_SIZE, 0.65)))).filter(Boolean)
+  const thumbnails = await buildThumbnails(previews.length > 0 ? previews : targets)
+  return { thumbnails, previews }
+}
+
+const readFileAsDataUrl = (file: File) => new Promise<string>((resolve) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '')
+  reader.onerror = () => resolve('')
+  reader.readAsDataURL(file)
+})
+
+const countScreenshots = (inputs: Record<string, any>, promptConfig: PromptConfig | null) => {
+  let count = 0
+  promptConfig?.prompt_variables.forEach((variable) => {
+    if (variable.type !== 'file-list')
+      return
+    const value = inputs?.[variable.key]
+    if (Array.isArray(value))
+      count += value.length
+  })
+  return count
+}
+
+// 手动格式化，避免服务端渲染与浏览器的时区/locale 差异导致 hydration 警告
+const formatTaskTime = (timestamp: number) => {
+  const date = new Date(timestamp)
+  const pad = (value: number) => `${value}`.padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
 const TextGeneration = () => {
@@ -55,8 +174,6 @@ const TextGeneration = () => {
   const isMobile = media === MediaType.mobile
 
   const [currTab, setCurrTab] = useState<string>('create')
-  // Notice this situation isCallBatchAPI but not in batch tab
-  const [isCallBatchAPI, setIsCallBatchAPI] = useState(false)
   const isInBatchTab = currTab === 'batch'
 
   /*
@@ -68,8 +185,6 @@ const TextGeneration = () => {
 
   const [inputs, setInputs] = useState<Record<string, any>>({})
   const [promptConfig, setPromptConfig] = useState<PromptConfig | null>(null)
-  const [isResponsing, { setTrue: setResponsingTrue, setFalse: setResponsingFalse }] = useBoolean(false)
-  const isResponsingRef = useRef(false)
   const [isPreparingBatch, setIsPreparingBatch] = useState(false)
   const isPreparingBatchRef = useRef(false)
   const [completionRes, setCompletionRes] = useState('')
@@ -88,16 +203,6 @@ const TextGeneration = () => {
   const logError = (message: string) => {
     notify({ type: 'error', message })
   }
-
-  const handleResponsingChange = useCallback((responsing: boolean, taskId?: number) => {
-    if (taskId !== undefined)
-      return
-    isResponsingRef.current = responsing
-    if (responsing)
-      setResponsingTrue()
-    else
-      setResponsingFalse()
-  }, [setResponsingFalse, setResponsingTrue])
 
   const checkCanSend = () => {
     const prompt_variables = promptConfig?.prompt_variables
@@ -130,8 +235,6 @@ const TextGeneration = () => {
     }
     return !hasEmptyInput
   }
-  const [controlSend, setControlSend] = useState(0)
-  const [controlStopResponding, setControlStopResponding] = useState(0)
   const [visionConfig, setVisionConfig] = useState<VisionSettings>({
     enabled: false,
     number_limits: 2,
@@ -139,52 +242,111 @@ const TextGeneration = () => {
     transfer_methods: [TransferMethod.local_file],
   })
   const [completionFiles, setCompletionFiles] = useState<VisionFile[]>([])
-  const handleSend = async () => {
-    if (isResponsingRef.current || isPreparingBatchRef.current || (isCallBatchAPI && !allTaskRuned)) {
+  const [formPreviews, setFormPreviews] = useState<string[]>([])
+  const [resetFormToken, setResetFormToken] = useState(0)
+  // 提交成功提示改成左侧表单内联展示（右上角 toast 容易看不到）
+  const [submitHintToken, setSubmitHintToken] = useState(0)
+
+  // 提交成功后清空左侧表单，方便立刻录入下一条
+  const resetInputForm = () => {
+    const emptyInputs: Record<string, any> = {}
+    promptConfig?.prompt_variables.forEach((item) => {
+      emptyInputs[item.key] = item.type === 'file-list' ? [] : ''
+    })
+    setInputs(emptyInputs)
+    setCompletionFiles([])
+    setFormPreviews([])
+    setResetFormToken(token => token + 1)
+  }
+
+  // 单次运行：不再等待上一条结束，直接把当前输入入队，并行执行
+  const handleRunOnce = async () => {
+    if (isPreparingBatchRef.current) {
       notify({ type: 'info', message: t('appDebug.errorMessage.waitForResponse') })
       return
     }
     if (!checkCanSend())
       return
 
-    handleResponsingChange(true)
-    setIsCallBatchAPI(false)
-    setControlSend(Date.now())
+    const previews = [...formPreviews]
     // eslint-disable-next-line @typescript-eslint/no-use-before-define
-    setAllTaskList([]) // clear batch task running status
-    // eslint-disable-next-line @typescript-eslint/no-use-before-define
-    showResSidebar()
+    const createdTasks = enqueueTasks([{
+      inputs: { ...inputs },
+      files: completionFiles.length > 0 ? [...completionFiles] : undefined,
+      source: 'create',
+    }])
+    resetInputForm()
+    setSubmitHintToken(token => token + 1)
+
+    // 缩略图是纯展示数据，异步生成后回填，避免拖慢提交
+    if (createdTasks.length && previews.length) {
+      const { thumbnails, previews: previewImages } = await buildTaskImages(previews)
+      if (thumbnails.length || previewImages.length) {
+        const createdIds = createdTasks.map(task => task.id)
+        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        setAllTaskList(getLatestTaskList().map(task => createdIds.includes(task.id) ? { ...task, thumbnails, previews: previewImages } : task))
+      }
+    }
   }
 
   const taskRetryTokenRef = useRef(0)
-  const handleRetryAllFailedTask = () => {
-    const retryToken = ++taskRetryTokenRef.current
-    setAllTaskList(getLatestTaskList().map(task => task.status === TaskStatus.failed ? { ...task, status: TaskStatus.running, retryToken } : task))
-  }
   const [allTaskList, doSetAllTaskList] = useState<Task[]>([])
   const taskSendTokenRef = useRef(0)
+  const nextTaskIdRef = useRef(1)
   const allTaskListRef = useRef<Task[]>([])
+  const [historyReady, setHistoryReady] = useState(false)
   const getLatestTaskList = () => allTaskListRef.current
   const setAllTaskList = (taskList: Task[]) => {
     doSetAllTaskList(taskList)
     allTaskListRef.current = taskList
   }
+  const [expandedTaskIds, setExpandedTaskIds] = useState<number[]>([])
+  const [previewImages, setPreviewImages] = useState<string[]>([])
+  const openTaskImages = (task: Task) => {
+    const images = (task.previews?.length ? task.previews : task.thumbnails) || []
+    if (images.length > 0)
+      setPreviewImages(images)
+  }
+  const toggleTaskExpanded = (taskId: number) => {
+    setExpandedTaskIds(ids => ids.includes(taskId) ? ids.filter(id => id !== taskId) : [...ids, taskId])
+  }
+  const isCallBatchAPI = allTaskList.length > 0 // 有任务时右侧按任务历史列表渲染
   const pendingTaskList = allTaskList.filter(task => task.status === TaskStatus.pending)
-  const noPendingTask = pendingTaskList.length === 0
-  const showTaskList = allTaskList.filter(task => task.status !== TaskStatus.pending)
-  const [currGroupNum, doSetCurrGroupNum] = useState(0)
-  const currGroupNumRef = useRef(0)
-  const setCurrGroupNum = (num: number) => {
-    doSetCurrGroupNum(num)
-    currGroupNumRef.current = num
-  }
-  const getCurrGroupNum = () => {
-    return currGroupNumRef.current
-  }
-  const allSuccessTaskList = allTaskList.filter(task => task.status === TaskStatus.completed)
+  const runningTaskList = allTaskList.filter(task => task.status === TaskStatus.running)
   const allFailedTaskList = allTaskList.filter(task => task.status === TaskStatus.failed)
-  const allTaskFinished = allTaskList.every(task => task.status === TaskStatus.completed)
   const allTaskRuned = allTaskList.every(task => [TaskStatus.completed, TaskStatus.failed].includes(task.status))
+
+  // 单次运行与批量运行都走这里入队，由调度器统一控制并发
+  const enqueueTasks = (items: Array<{ inputs: Record<string, any>, files?: VisionFile[], source: TaskSource, thumbnails?: string[], previews?: string[] }>) => {
+    if (items.length === 0)
+      return []
+    const createdAt = Date.now()
+    const tasks: Task[] = items.map((item, index) => ({
+      id: nextTaskIdRef.current++,
+      sendToken: ++taskSendTokenRef.current,
+      status: TaskStatus.pending,
+      createdAt: createdAt + index,
+      customerId: buildCustomerId(item.inputs, promptConfig),
+      source: item.source,
+      thumbnails: item.thumbnails,
+      previews: item.previews,
+      screenshotCount: countScreenshots(item.inputs, promptConfig),
+      params: { inputs: item.inputs, files: item.files },
+    }))
+    setAllTaskList([...getLatestTaskList(), ...tasks])
+    // 新任务默认展开，方便立刻看到进度
+    setExpandedTaskIds(ids => [...ids, ...tasks.map(task => task.id)])
+    showResSidebar()
+    return tasks
+  }
+
+  const handleRetryAllFailedTask = () => {
+    const retryToken = ++taskRetryTokenRef.current
+    const latest = getLatestTaskList()
+    const retryIds = latest.filter(task => task.status === TaskStatus.failed).map(task => task.id)
+    setExpandedTaskIds(ids => [...new Set([...ids, ...retryIds])])
+    setAllTaskList(latest.map(task => task.status === TaskStatus.failed ? { ...task, status: TaskStatus.running, retryToken } : task))
+  }
   const [batchCompletionRes, doSetBatchCompletionRes] = useState<Record<string, string>>({})
   const batchCompletionResRef = useRef<Record<string, string>>({})
   const setBatchCompletionRes = (res: Record<string, string>) => {
@@ -192,6 +354,128 @@ const TextGeneration = () => {
     batchCompletionResRef.current = res
   }
   const getBatchCompletionRes = () => batchCompletionResRef.current
+
+  // 调度：始终让运行中的任务数不超过 MAX_CONCURRENT，谁先结束谁先补位
+  useEffect(() => {
+    if (!historyReady)
+      return
+    const latest = getLatestTaskList()
+    const available = MAX_CONCURRENT - latest.filter(task => task.status === TaskStatus.running).length
+    if (available <= 0)
+      return
+    const nextRunningIds = latest
+      .filter(task => task.status === TaskStatus.pending)
+      .slice(0, available)
+      .map(task => task.id)
+    if (nextRunningIds.length === 0)
+      return
+    setAllTaskList(latest.map(task => nextRunningIds.includes(task.id) ? { ...task, status: TaskStatus.running } : task))
+  }, [allTaskList, historyReady])
+
+  // 恢复历史：已完成的任务刷新后仍可查看；被中断的任务标记为失败，可手动重试
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(HISTORY_STORAGE_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw) as PersistedHistory
+        if (parsed?.version === 1 && Array.isArray(parsed.tasks)) {
+          const restoredTasks = parsed.tasks
+            .filter(task => task && typeof task.id === 'number')
+            .map((task, index) => {
+              // 负数 token：唯一但不会触发自动执行（只有正数 token 会启动任务）
+              const sendToken = -(index + 1)
+              return task.status === TaskStatus.completed
+                ? { ...task, sendToken }
+                : {
+                    ...task,
+                    sendToken,
+                    retryToken: undefined,
+                    status: TaskStatus.failed as TaskStatus,
+                    failureReason: task.status === TaskStatus.failed
+                      ? (task.failureReason || '任务执行失败')
+                      : '页面刷新中断，可点击重试',
+                  }
+            })
+          setAllTaskList(restoredTasks)
+          setBatchCompletionRes(parsed.results || {})
+          nextTaskIdRef.current = Math.max(parsed.nextTaskId || 1, ...restoredTasks.map(task => task.id + 1), 1)
+        }
+      }
+    }
+    catch {
+      // 历史数据损坏时忽略，不影响正常使用
+    }
+    setHistoryReady(true)
+  }, [])
+
+  // 持久化任务历史（含结果），刷新后仍可查看
+  useEffect(() => {
+    if (!historyReady)
+      return
+    try {
+      const trimmedTasks = allTaskList.slice(-MAX_HISTORY_TASKS)
+      const keptIds = new Set(trimmedTasks.map(task => `${task.id}`))
+      const results: Record<string, any> = {}
+      Object.entries(getBatchCompletionRes()).forEach(([key, value]) => {
+        if (keptIds.has(key))
+          results[key] = value
+      })
+      // 图片只保留最近若干条，避免 localStorage 超限
+      const trimImages = (tasks: Task[], keepPreviews: boolean, keepThumbnails: boolean) => {
+        const previewStart = Math.max(0, tasks.length - PREVIEW_KEEP_TASKS)
+        const thumbStart = Math.max(0, tasks.length - THUMBNAIL_KEEP_TASKS)
+        return tasks.map((task, index) => ({
+          ...task,
+          previews: keepPreviews && index >= previewStart ? task.previews : undefined,
+          thumbnails: keepThumbnails && index >= thumbStart ? task.thumbnails : undefined,
+        }))
+      }
+      const payloadOf = (tasks: Task[]) => JSON.stringify({
+        version: 1,
+        nextTaskId: nextTaskIdRef.current,
+        tasks,
+        results,
+      } as PersistedHistory)
+      try {
+        window.localStorage.setItem(HISTORY_STORAGE_KEY, payloadOf(trimImages(trimmedTasks, true, true)))
+      }
+      catch {
+        // 超出配额时逐级降级：先去放大图，再去缩略图
+        try {
+          window.localStorage.setItem(HISTORY_STORAGE_KEY, payloadOf(trimImages(trimmedTasks, false, true)))
+        }
+        catch {
+          try {
+            window.localStorage.setItem(HISTORY_STORAGE_KEY, payloadOf(trimImages(trimmedTasks, false, false)))
+          }
+          catch {
+            // 仍然失败就只保留本次会话，不影响使用
+          }
+        }
+      }
+    }
+    catch {
+      // 超出存储配额等情况静默跳过，不影响本次会话
+    }
+  }, [allTaskList, batchCompletionRes, historyReady])
+
+  const handleClearHistory = () => {
+    if (allTaskList.length === 0)
+      return
+    if (!window.confirm(String(t('app.generation.history.clearConfirm'))))
+      return
+    setAllTaskList([])
+    setBatchCompletionRes({})
+    setExpandedTaskIds([])
+    // 清空历史后编号重新从 1 开始
+    nextTaskIdRef.current = 1
+    try {
+      window.localStorage.removeItem(HISTORY_STORAGE_KEY)
+    }
+    catch {
+      // 忽略清理失败
+    }
+  }
   const candidateFieldNames = [
     '客户成功',
     '销售',
@@ -372,7 +656,7 @@ const TextGeneration = () => {
   const handleRunBatch = async (data: string[][], embeddedImages: EmbeddedImagesByCell) => {
     if (!checkBatchInputs(data, embeddedImages))
       return
-    if (!allTaskFinished || isResponsingRef.current || isPreparingBatchRef.current || (isCallBatchAPI && !allTaskRuned)) {
+    if (isPreparingBatchRef.current) {
       notify({ type: 'info', message: t('appDebug.errorMessage.waitForBatchResponse') })
       return
     }
@@ -386,9 +670,6 @@ const TextGeneration = () => {
 
     isPreparingBatchRef.current = true
     setIsPreparingBatch(true)
-    setIsCallBatchAPI(true)
-    setCurrGroupNum(0)
-    setBatchCompletionRes({})
     try {
       const requiredImages = [...new Set(imageFilesByRow.flat())]
       const uploadedImages = new Map<File, string>()
@@ -404,14 +685,22 @@ const TextGeneration = () => {
         })
       })))
 
-      const allTaskList: Task[] = payloadData.map((item, i) => {
-        const inputs: Record<string, any> = {}
+      const imagesByRow = await Promise.all(payloadData.map(async (_, rowIndex) => {
+        const rowImages = fileVariables.flatMap(({ index }) => embeddedImages[rowIndex]?.[index] || []).slice(0, PREVIEW_LIMIT)
+        if (rowImages.length === 0)
+          return { thumbnails: [] as string[], previews: [] as string[] }
+        const dataUrls = (await Promise.all(rowImages.map(readFileAsDataUrl))).filter(Boolean)
+        return buildTaskImages(dataUrls)
+      }))
+
+      const batchTasks = payloadData.map((item, i) => {
+        const taskInputs: Record<string, any> = {}
         if (varLen > 0) {
           item.slice(0, varLen).forEach((input, index) => {
             const variable = promptConfig?.prompt_variables[index]
             if (variable?.type === 'file-list') {
               const files = embeddedImages[i]?.[index] || []
-              inputs[variable.key] = files.map(file => ({
+              taskInputs[variable.key] = files.map(file => ({
                 type: 'image',
                 transfer_method: TransferMethod.local_file,
                 url: '',
@@ -419,24 +708,22 @@ const TextGeneration = () => {
               }))
             }
             else {
-              inputs[variable?.key as string] = input
+              taskInputs[variable?.key as string] = input
             }
           })
         }
+        // 批量任务的图片来自表格内嵌图片，这里显式置空，避免复用左侧单次运行残留的上传文件
         return {
-          id: i + 1,
-          sendToken: ++taskSendTokenRef.current,
-          status: i < GROUP_SIZE ? TaskStatus.running : TaskStatus.pending,
-          params: { inputs },
+          inputs: taskInputs,
+          files: [],
+          source: 'batch' as TaskSource,
+          thumbnails: imagesByRow[i].thumbnails,
+          previews: imagesByRow[i].previews,
         }
       })
-      setAllTaskList(allTaskList)
-      setControlSend(Date.now())
-      setControlStopResponding(Date.now())
-      showResSidebar()
+      enqueueTasks(batchTasks)
     }
     catch (error) {
-      setIsCallBatchAPI(false)
       notify({ type: 'error', message: t('app.generation.errorMsg.batchImageUploadFailed', { name: (error as Error).message }) })
     }
     finally {
@@ -447,48 +734,24 @@ const TextGeneration = () => {
 
   const handleCompleted = (completionRes: string, taskId?: number, isSuccess?: boolean, failureReason?: string) => {
     if (taskId === undefined)
-      handleResponsingChange(false)
-    const allTasklistLatest = getLatestTaskList()
-    if (taskId !== undefined) {
-      const task = allTasklistLatest.find(item => item.id === taskId)
-      if (!task || task.status === TaskStatus.completed || task.status === TaskStatus.failed)
-        return
-    }
-    const batchCompletionResLatest = getBatchCompletionRes()
-    const pendingTaskList = allTasklistLatest.filter(task => task.status === TaskStatus.pending)
-    const hadRunedTaskNum = 1 + allTasklistLatest.filter(task => [TaskStatus.completed, TaskStatus.failed].includes(task.status)).length
-    const needToAddNextGroupTask = (getCurrGroupNum() !== hadRunedTaskNum) && pendingTaskList.length > 0 && (hadRunedTaskNum % GROUP_SIZE === 0 || (allTasklistLatest.length - hadRunedTaskNum < GROUP_SIZE))
-    // avoid add many task at the same time
-    if (needToAddNextGroupTask)
-      setCurrGroupNum(hadRunedTaskNum)
-    // console.group()
-    // console.log(`[#${taskId}]: ${isSuccess ? 'success' : 'fail'}.currGroupNum: ${getCurrGroupNum()}.hadRunedTaskNum: ${hadRunedTaskNum}, needToAddNextGroupTask: ${needToAddNextGroupTask}`)
-    // console.log([...allTasklistLatest.filter(task => [TaskStatus.completed, TaskStatus.failed].includes(task.status)).map(item => item.id), taskId].sort((a: any, b: any) => a - b).join(','))
-    // console.groupEnd()
-    const nextPendingTaskIds = needToAddNextGroupTask ? pendingTaskList.slice(0, GROUP_SIZE).map(item => item.id) : []
-    const newAllTaskList = allTasklistLatest.map((item) => {
-      if (item.id === taskId) {
-        return {
+      return
+    const latestTaskList = getLatestTaskList()
+    // 用 sendToken 匹配任务：清空历史后编号会重新计数，用 id 匹配可能串到新任务上
+    const task = latestTaskList.find(item => item.sendToken === taskId)
+    // 已完成的任务不再重复写入（重试中的失败任务允许更新结果）
+    if (!task || task.status === TaskStatus.completed)
+      return
+    setBatchCompletionRes({
+      ...getBatchCompletionRes(),
+      [`${task.id}`]: completionRes,
+    })
+    setAllTaskList(latestTaskList.map(item => item.sendToken === taskId
+      ? {
           ...item,
           status: isSuccess ? TaskStatus.completed : TaskStatus.failed,
           failureReason: isSuccess ? undefined : failureReason,
         }
-      }
-      if (needToAddNextGroupTask && nextPendingTaskIds.includes(item.id)) {
-        return {
-          ...item,
-          status: TaskStatus.running,
-        }
-      }
-      return item
-    })
-    setAllTaskList(newAllTaskList)
-    if (taskId) {
-      setBatchCompletionRes({
-        ...batchCompletionResLatest,
-        [`${taskId}`]: completionRes,
-      })
-    }
+      : item))
   }
 
   useEffect(() => {
@@ -539,27 +802,116 @@ const TextGeneration = () => {
     <Result
       key={task ? `${task.id}-${task.sendToken}` : 'single-result'}
       isWorkflow={IS_WORKFLOW}
-      isCallBatchAPI={isCallBatchAPI}
+      isCallBatchAPI={Boolean(task)}
       isPC={isPC}
       isMobile={isMobile}
       isError={task?.status === TaskStatus.failed}
       promptConfig={promptConfig}
-      inputs={isCallBatchAPI ? (task as Task).params.inputs : inputs}
-      controlSend={task?.sendToken ?? controlSend}
+      inputs={task ? task.params.inputs : inputs}
+      controlSend={task && task.sendToken > 0 ? task.sendToken : undefined}
       controlRetry={task?.retryToken ?? 0}
-      controlStopResponding={controlStopResponding}
+      initialContent={task ? getBatchCompletionRes()[`${task.id}`] : undefined}
       onShowRes={showResSidebar}
       taskId={task?.id}
+      runKey={task?.sendToken}
       onCompleted={handleCompleted}
-      onResponsingChange={handleResponsingChange}
       visionConfig={visionConfig}
-      completionFiles={completionFiles}
+      completionFiles={task?.params.files ?? completionFiles}
     />
   )
 
-  const renderBatchRes = () => {
-    return (showTaskList.map(task => renderRes(task)))
+  const statusText = (status: TaskStatus) => ({
+    [TaskStatus.pending]: t('app.generation.history.statusPending'),
+    [TaskStatus.running]: t('app.generation.history.statusRunning'),
+    [TaskStatus.completed]: t('app.generation.history.statusCompleted'),
+    [TaskStatus.failed]: t('app.generation.history.statusFailed'),
+  })[status]
+
+  const statusClassName = (status: TaskStatus) => ({
+    [TaskStatus.pending]: 'bg-gray-100 text-gray-600',
+    [TaskStatus.running]: 'bg-[#EAF2FF] text-[#155EEF]',
+    [TaskStatus.completed]: 'bg-[#ECFDF3] text-[#027A48]',
+    [TaskStatus.failed]: 'bg-[#FEF3F2] text-[#B42318]',
+  })[status]
+
+  const renderTaskRow = (task: Task) => {
+    const isExpanded = expandedTaskIds.includes(task.id)
+    const thumbnails = task.thumbnails || []
+    return (
+      <div
+        key={`${task.id}-${task.sendToken}`}
+        className={cn(
+          'mb-3 rounded-xl border p-3',
+          task.status === TaskStatus.failed ? 'border-[#FECDCA] bg-[#FEF3F2]/40' : 'border-gray-200 bg-white',
+        )}
+      >
+        <button
+          type='button'
+          onClick={() => toggleTaskExpanded(task.id)}
+          className='w-full rounded-lg px-2 py-1 text-left hover:bg-gray-50'
+        >
+          <div className='flex items-center justify-between gap-3'>
+            <div className='flex min-w-0 items-center gap-3'>
+              {thumbnails.length > 0
+                ? (
+                  <div className='relative shrink-0'>
+                    <img
+                      src={thumbnails[0]}
+                      alt=''
+                      className='h-11 w-11 rounded-md border border-gray-200 bg-gray-50 object-cover cursor-zoom-in'
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        openTaskImages(task)
+                      }}
+                    />
+                    {(task.screenshotCount || 0) > 1 && (
+                      <span className='pointer-events-none absolute -bottom-1 -right-1 rounded-full bg-gray-800/80 px-1 text-[10px] font-medium text-white'>
+                        {task.screenshotCount}
+                      </span>
+                    )}
+                  </div>
+                )
+                : (
+                  <div className='flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-gray-200 bg-gray-50 text-[10px] leading-tight text-gray-400'>
+                    {t('app.generation.history.noThumbnail')}
+                  </div>
+                )}
+              <div className='min-w-0'>
+                <div className='truncate text-sm font-medium text-gray-800'>
+                  {t('app.generation.history.customerId')}：{task.customerId || '-'}
+                </div>
+                <div className='mt-0.5 flex min-w-0 items-center gap-2 text-xs text-gray-500'>
+                  <span className='shrink-0'>#{task.id}</span>
+                  <span className='shrink-0'>{t('app.generation.history.screenshotCount', { count: task.screenshotCount || 0 })}</span>
+                  <span className='shrink-0 rounded bg-gray-100 px-1.5 py-0.5 text-gray-600'>
+                    {task.source === 'batch' ? t('app.generation.history.sourceBatch') : t('app.generation.history.sourceCreate')}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div className='flex shrink-0 items-center gap-2'>
+              <span className='text-xs text-gray-400'>{formatTaskTime(task.createdAt)}</span>
+              <span className={cn('rounded px-1.5 py-0.5 text-xs', statusClassName(task.status))}>{statusText(task.status)}</span>
+              <ChevronRightIcon className={cn('h-3.5 w-3.5 text-gray-400 transition-transform', isExpanded && 'rotate-90')} />
+            </div>
+          </div>
+        </button>
+        {isExpanded && (
+          <div className='pr-1'>
+            {task.status === TaskStatus.pending
+              ? <div className='text-xs text-gray-500'>{t('app.generation.history.pendingHint')}</div>
+              : renderRes(task)}
+            {(task.status === TaskStatus.failed && task.failureReason) && (
+              <div className='mt-1 text-xs text-[#B42318]'>{task.failureReason}</div>
+            )}
+          </div>
+        )}
+      </div>
+    )
   }
+
+  // 右侧任务倒序排列（最新在最上）
+  const renderHistoryRes = () => [...allTaskList].reverse().map(task => renderTaskRow(task))
 
   const renderResWrap = (
     <div
@@ -572,12 +924,23 @@ const TextGeneration = () => {
       }
     >
       <>
-        <div className='shrink-0 flex items-center justify-between'>
+        <div className='shrink-0 flex items-center justify-between mb-4'>
           <div className='flex items-center space-x-3'>
             <div className={s.starIcon}></div>
             <div className='text-lg text-gray-800 font-semibold'>{t('app.generation.title')}</div>
           </div>
           <div className='flex items-center space-x-2'>
+            {allTaskList.length > 0 && (
+              <span className='text-xs text-gray-500'>
+                {t('app.generation.history.summary', { total: allTaskList.length, running: runningTaskList.length + pendingTaskList.length })}
+              </span>
+            )}
+            {allTaskList.length > 0 && (
+              <Button
+                className='!h-8 !px-3'
+                onClick={handleClearHistory}
+              >{t('app.generation.history.clear')}</Button>
+            )}
             {allFailedTaskList.length > 0 && (
               <div className='flex items-center'>
                 <AlertCircle className='w-4 h-4 text-[#D92D20]' />
@@ -608,13 +971,15 @@ const TextGeneration = () => {
         </div>
 
         <div className='grow overflow-y-auto'>
-          {!isCallBatchAPI ? renderRes() : renderBatchRes()}
-          {!noPendingTask && (
-            <div className='mt-4'>
-              <Loading type='area' />
-            </div>
-          )}
+          {isCallBatchAPI ? renderHistoryRes() : renderRes()}
         </div>
+        {previewImages.length > 0 && (
+          <ImagePreview
+            url={previewImages[0]}
+            urls={previewImages}
+            onCancel={() => setPreviewImages([])}
+          />
+        )}
       </>
     </div>
   )
@@ -668,8 +1033,11 @@ const TextGeneration = () => {
                 inputs={inputs}
                 onInputsChange={setInputs}
                 promptConfig={promptConfig}
-                onSend={handleSend}
-                isSending={isResponsing || isPreparingBatch || (isCallBatchAPI && !allTaskRuned)}
+                onSend={handleRunOnce}
+                isSending={isPreparingBatch}
+                resetToken={resetFormToken}
+                submitHintToken={submitHintToken}
+                onPreviewsChange={setFormPreviews}
                 visionConfig={visionConfig}
                 onVisionFilesChange={setCompletionFiles}
               />
@@ -677,7 +1045,7 @@ const TextGeneration = () => {
             {isInBatchTab && (
               <RunBatch
                 onSend={handleRunBatch}
-                isAllFinished={allTaskFinished && !isResponsing && !isPreparingBatch && (!isCallBatchAPI || allTaskRuned)}
+                isAllFinished={!isPreparingBatch && allTaskRuned}
                 isPreparingImages={isPreparingBatch}
               />
             )}
