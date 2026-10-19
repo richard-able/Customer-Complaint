@@ -175,11 +175,11 @@ const Result: FC<IResultProps> = ({
     let isEnd = false
     let isTimeout = false;
     (async () => {
-      await sleep(1000 * 60) // 1min timeout
+      await sleep(5 * 60 * 1000) // 5min timeout
       if (!isEnd) {
         setResponsingFalse()
         onResponsingChange?.(false, taskId)
-        onCompleted(getCompletionRes(), taskId, false, '任务超时（超过 1 分钟）')
+        onCompleted(getCompletionRes(), taskId, false, '任务超时（超过 5 分钟）')
         isTimeout = true
       }
     })()
