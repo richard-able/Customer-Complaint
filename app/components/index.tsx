@@ -250,8 +250,12 @@ const TextGeneration = () => {
   // 提交成功后清空左侧表单，方便立刻录入下一条
   const resetInputForm = () => {
     const emptyInputs: Record<string, any> = {}
+    const customerIdVariable = promptConfig?.prompt_variables.find(item => item.name.trim() === '客户ID')
     promptConfig?.prompt_variables.forEach((item) => {
-      emptyInputs[item.key] = item.type === 'file-list' ? [] : ''
+      // 提交后清空图片等输入，但保留客户ID，便于连续录入同一客户。
+      emptyInputs[item.key] = item.key === customerIdVariable?.key
+        ? inputs[item.key] ?? ''
+        : item.type === 'file-list' ? [] : ''
     })
     setInputs(emptyInputs)
     setCompletionFiles([])
