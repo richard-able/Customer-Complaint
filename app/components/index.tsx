@@ -808,7 +808,8 @@ const TextGeneration = () => {
       isError={task?.status === TaskStatus.failed}
       promptConfig={promptConfig}
       inputs={task ? task.params.inputs : inputs}
-      controlSend={task && task.sendToken > 0 ? task.sendToken : undefined}
+      // 只有调度器已启动的任务才发送；展开已完成任务时不应重放请求。
+      controlSend={task && task.status === TaskStatus.running && task.sendToken > 0 ? task.sendToken : undefined}
       controlRetry={task?.retryToken ?? 0}
       initialContent={task ? getBatchCompletionRes()[`${task.id}`] : undefined}
       onShowRes={showResSidebar}
@@ -896,16 +897,14 @@ const TextGeneration = () => {
             </div>
           </div>
         </button>
-        {isExpanded && (
-          <div className='pr-1'>
+        <div className={cn('pr-1', !isExpanded && 'hidden')}>
             {task.status === TaskStatus.pending
               ? <div className='text-xs text-gray-500'>{t('app.generation.history.pendingHint')}</div>
               : renderRes(task)}
             {(task.status === TaskStatus.failed && task.failureReason) && (
               <div className='mt-1 text-xs text-[#B42318]'>{task.failureReason}</div>
             )}
-          </div>
-        )}
+        </div>
       </div>
     )
   }
