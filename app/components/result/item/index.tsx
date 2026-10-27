@@ -33,6 +33,8 @@ export type IGenerationItemProps = {
   onFeedback?: (feedback: Feedbacktype) => void
   isMobile?: boolean
   taskId?: string
+  /** 嵌在历史卡片里时不再自己画外框，避免卡片套卡片 */
+  embedded?: boolean
 }
 
 export const SimpleBtn = ({ className, isDisabled, onClick, children }: {
@@ -73,6 +75,7 @@ const GenerationItem: FC<IGenerationItemProps> = ({
   depth = 1,
   isMobile,
   taskId,
+  embedded = false,
 }) => {
   const { t } = useTranslation()
   const isTop = depth === 1
@@ -166,8 +169,13 @@ const GenerationItem: FC<IGenerationItemProps> = ({
   }, [isLoading])
 
   return (
-    <div className={cn(className, isTop ? `rounded-xl border ${!isError ? 'border-gray-200 bg-white' : 'border-[#FECDCA] bg-[#FEF3F2]'} ` : 'rounded-br-xl !mt-0')}
-      style={isTop
+    <div
+      className={cn(className, embedded && isTop
+        ? ''
+        : (isTop
+            ? `rounded-xl border ${!isError ? 'border-gray-200 bg-white' : 'border-[#FECDCA] bg-[#FEF3F2]'} `
+            : 'rounded-br-xl !mt-0'))}
+      style={isTop && !embedded
         ? {
           boxShadow: '0px 1px 2px rgba(16, 24, 40, 0.05)',
         }
@@ -182,7 +190,8 @@ const GenerationItem: FC<IGenerationItemProps> = ({
             className={cn(!isTop && 'rounded-br-xl border-l-2 border-primary-400', 'p-4')}
             style={mainStyle}
           >
-            {(isTop && taskId) && (
+            {/* 历史卡片头部已经有编号，这里不再重复显示 */}
+            {(isTop && taskId && !embedded) && (
               <div className='mb-2 text-gray-500 border border-gray-200 box-border flex items-center rounded-md italic text-[11px] pl-1 pr-1.5 font-medium w-fit group-hover:opacity-100'>
                 <HashtagIcon className='w-3 h-3 text-gray-400 fill-current mr-1 stroke-current stroke-1' />
                 {taskId}

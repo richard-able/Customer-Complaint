@@ -25,8 +25,11 @@ export type IResultProps = {
   controlSend?: number
   controlRetry?: number
   controlStopResponding?: number
+  initialContent?: string
   onShowRes: () => void
   taskId?: number
+  /** 任务的唯一标识（sendToken），用于回写结果；taskId 只用于展示编号 */
+  runKey?: number
   onCompleted: (completionRes: string, taskId?: number, success?: boolean, failureReason?: string) => void
   onResponsingChange?: (isResponsing: boolean, taskId?: number) => void
   visionConfig: VisionSettings
@@ -44,14 +47,18 @@ const Result: FC<IResultProps> = ({
   controlSend,
   controlRetry,
   controlStopResponding,
+  initialContent,
   onShowRes,
   taskId,
+  runKey,
   onCompleted,
   onResponsingChange,
   visionConfig,
   completionFiles,
 }) => {
   const [isResponsing, { setTrue: setResponsingTrue, setFalse: setResponsingFalse }] = useBoolean(false)
+  // 结果回写用 runKey（唯一）；没有时退回 taskId，兼容旧调用
+  const completionKey = runKey ?? taskId
   const lastControlSendRef = useRef<number | undefined>(undefined)
   const lastControlRetryRef = useRef<number | undefined>(undefined)
   useEffect(() => {
@@ -61,8 +68,8 @@ const Result: FC<IResultProps> = ({
     }
   }, [controlStopResponding, onResponsingChange, taskId])
 
-  const [completionRes, doSetCompletionRes] = useState('')
-  const completionResRef = useRef('')
+  const [completionRes, doSetCompletionRes] = useState(initialContent || '')
+  const completionResRef = useRef(initialContent || '')
   const setCompletionRes = (res: string) => {
     completionResRef.current = res
     doSetCompletionRes(res)
@@ -179,7 +186,7 @@ const Result: FC<IResultProps> = ({
       if (!isEnd) {
         setResponsingFalse()
         onResponsingChange?.(false, taskId)
-        onCompleted(getCompletionRes(), taskId, false, '任务超时（超过 5 分钟）')
+        onCompleted(getCompletionRes(), completionKey, false, '任务超时（超过 5 分钟）')
         isTimeout = true
       }
     })()
@@ -227,7 +234,7 @@ const Result: FC<IResultProps> = ({
               notify({ type: 'error', message: data.error })
               setResponsingFalse()
               onResponsingChange?.(false, taskId)
-              onCompleted(getCompletionRes(), taskId, false, data.error)
+              onCompleted(getCompletionRes(), completionKey, false, data.error)
               isEnd = true
               return
             }
@@ -243,7 +250,7 @@ const Result: FC<IResultProps> = ({
             setResponsingFalse()
             onResponsingChange?.(false, taskId)
             setMessageId(tempMessageId)
-            onCompleted(getCompletionRes(), taskId, true)
+            onCompleted(getCompletionRes(), completionKey, true)
             isEnd = true
           },
           onError: (error) => {
@@ -252,7 +259,7 @@ const Result: FC<IResultProps> = ({
 
             setResponsingFalse()
             onResponsingChange?.(false, taskId)
-            onCompleted(getCompletionRes(), taskId, false, error || '工作流请求失败')
+            onCompleted(getCompletionRes(), completionKey, false, error || '工作流请求失败')
             isEnd = true
           },
         },
@@ -272,7 +279,7 @@ const Result: FC<IResultProps> = ({
           setResponsingFalse()
           onResponsingChange?.(false, taskId)
           setMessageId(tempMessageId)
-          onCompleted(getCompletionRes(), taskId, true)
+          onCompleted(getCompletionRes(), completionKey, true)
           isEnd = true
         },
         onError(error) {
@@ -281,7 +288,7 @@ const Result: FC<IResultProps> = ({
 
           setResponsingFalse()
           onResponsingChange?.(false, taskId)
-          onCompleted(getCompletionRes(), taskId, false, error || '流式请求失败')
+          onCompleted(getCompletionRes(), completionKey, false, error || '流式请求失败')
           isEnd = true
         },
       })
@@ -307,6 +314,7 @@ const Result: FC<IResultProps> = ({
       isWorkflow={isWorkflow}
       workflowProcessData={workflowProcessData}
       className='mt-3'
+      embedded={isCallBatchAPI}
       isError={isError}
       onRetry={handleSend}
       content={completionRes}
@@ -315,7 +323,8 @@ const Result: FC<IResultProps> = ({
       onFeedback={handleFeedback}
       feedback={feedback}
       isMobile={isMobile}
-      isLoading={isCallBatchAPI ? (!completionRes && isResponsing) : false}
+      // 任务列表模式下，工作流一旦开始就把节点进度显示出来，不要用 loading 把它挡住
+      isLoading={isCallBatchAPI ? (!completionRes && isResponsing && !workflowProcessData) : false}
       taskId={isCallBatchAPI ? ((taskId as number) < 10 ? `0${taskId}` : `${taskId}`) : undefined}
     />
   )
