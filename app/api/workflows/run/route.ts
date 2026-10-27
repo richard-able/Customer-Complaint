@@ -1,7 +1,7 @@
 import { type NextRequest } from 'next/server'
 import { API_KEY, API_URL, APP_ID } from '@/config'
 
-export const runtime = 'edge'
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const encoder = new TextEncoder()
