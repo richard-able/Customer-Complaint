@@ -5,6 +5,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:ci": "bash scripts/build.sh",
+    "docker:build": "bash scripts/build.sh",
+    "docker:deploy": "bash scripts/deploy-server.sh",
+    "deploy:remote": "bash scripts/deploy-remote.sh",
     "start": "next start",
     "lint": "next lint",
     "fix": "next lint --fix",

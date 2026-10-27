@@ -1,0 +1,17 @@
+name: customer-complaint
+
+services:
+  app:
+    image: ${IMAGE:-customer-complaint:latest}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      DIFY_API_KEY: ${DIFY_API_KEY:-}
+      BATCH_RUN_PASSWORD: ${BATCH_RUN_PASSWORD:-}
+    restart: unless-stopped
+    init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

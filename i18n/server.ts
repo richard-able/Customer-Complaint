@@ -23,6 +23,9 @@ export const getLocaleOnServer = (): Locale => {
     languages = new Negotiator({ headers: negotiatorHeaders }).languages()
   }
 
+  // Negotiator returns '*' when Accept-Language is absent.
+  languages = languages.filter(language => language !== '*')
+
   // match locale
   const matchedLocale = match(languages, locales, i18n.defaultLocale) as Locale
   return matchedLocale
