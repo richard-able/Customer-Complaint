@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      provenance: false
+      sbom: false
+      platforms:
+        - ${BUILD_PLATFORM:-linux/amd64}
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-public.ecr.aws/docker/library/node:22-bookworm-slim}
+        APP_ENV_HASH: ${APP_ENV_HASH:-}
+      secrets:
+        - project_env
+
+secrets:
+  project_env:
+    file: .env

@@ -2,12 +2,9 @@ name: customer-complaint
 
 services:
   app:
-    image: ${IMAGE:-customer-complaint:latest}
+    image: ${IMAGE:-mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v4}
     ports:
       - "${APP_PORT:-3000}:3000"
-    environment:
-      DIFY_API_KEY: ${DIFY_API_KEY:-}
-      BATCH_RUN_PASSWORD: ${BATCH_RUN_PASSWORD:-}
     restart: unless-stopped
     init: true
     logging:

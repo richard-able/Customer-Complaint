@@ -4,10 +4,12 @@
 
 | 执行位置 | 脚本 | 作用 |
 | --- | --- | --- |
-| 本地电脑或构建节点 | `scripts/build.sh` | 构建 Docker 镜像，可选推送到阿里云 ACR |
+| 本地电脑或构建节点 | `scripts/build.sh` | 构建 Docker 镜像，可选推送到京东云镜像仓库 |
 | 远程服务器 | `scripts/deploy-server.sh` | 拉取镜像、创建容器、等待健康检查 |
 
-两端都需要 Docker 和 Docker Compose v2，服务器的 Compose 需支持 `up --wait`。服务器无需 Node.js、npm 或项目源码。
+两端都需要 Docker 和 Docker Compose v2，构建节点需使用支持 `build.provenance` 和 `build.sbom` 的 Compose 版本（v2.39.0 或更新版本），服务器的 Compose 需支持 `up --wait`。服务器无需 Node.js、npm 或项目源码。
+
+应用配置统一维护在项目根目录的 `.env`。构建时将这份文件用于 Next.js 编译并打包到镜像，应用启动时读取镜像内的同一份配置；服务器无需另外创建环境文件。
 
 ## 1. 本地构建镜像
 
@@ -16,29 +18,32 @@
 首次创建本地配置：
 
 ```bash
-cp .env.example .env
+test -f .env || cp .env.example .env
 chmod 600 .env
 ```
 
-在 `.env` 中填写构建参数和目标镜像地址：
+在 `.env` 中填写应用配置和目标镜像地址：
 
 ```dotenv
 NEXT_PUBLIC_APP_ID=your-app-id
+DIFY_API_KEY=your-dify-api-key
 NEXT_PUBLIC_API_URL=https://your-dify-server.example.com/v1
 NEXT_PUBLIC_APP_TYPE_WORKFLOW=true
 NEXT_PUBLIC_APP_BASE_URL_PATH=
 NEXT_PUBLIC_API_PREFIX=/api
+NEXT_PUBLIC_MAX_CONCURRENT=5
+BATCH_RUN_PASSWORD=your-batch-password
 
-IMAGE=registry.cn-hangzhou.aliyuncs.com/your-namespace/customer-complaint:v1
+IMAGE=mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v4
 BASE_IMAGE=public.ecr.aws/docker/library/node:22-bookworm-slim
 BUILD_PLATFORM=linux/amd64
 ```
 
-仓库域名、命名空间和用户名以阿里云 ACR 控制台提供的信息为准。默认目标平台是 `linux/amd64`，ARM 服务器改为 `linux/arm64`。构建机器需要支持目标平台，跨架构构建通常需要 Docker Desktop 的模拟支持或在 Linux 构建机上配置 QEMU。
+仓库域名、命名空间和用户名以京东云镜像仓库 控制台提供的信息为准。默认目标平台是 `linux/amd64`，ARM 服务器改为 `linux/arm64`。构建机器需要支持目标平台，跨架构构建通常需要 Docker Desktop 的模拟支持或在 Linux 构建机上配置 QEMU。
 
-`NEXT_PUBLIC_*` 写入构建产物，修改后必须重新构建。Dify API 地址通常包含 `/v1`，需要能从服务器容器内访问。`BASE_IMAGE` 是下载的 Node 基础镜像，`IMAGE` 是应用镜像的标签及发布地址。
+`NEXT_PUBLIC_MAX_CONCURRENT` 是批量任务的并发上限，默认 5；`BATCH_RUN_PASSWORD` 是批量分析功能的验证密码，留空使用应用默认值。Dify API 地址通常包含 `/v1`，需要能从服务器容器内访问。`BASE_IMAGE` 是下载的 Node 基础镜像，`IMAGE` 是应用镜像的标签及发布地址。
 
-构建生产镜像不需要填写 `DIFY_API_KEY` 或 `BATCH_RUN_PASSWORD`。本地启动应用测试时，可在同一个 `.env` 中填写这些运行参数；它们不会进入 Docker 构建参数，环境文件也不会复制到镜像。
+镜像包含 `.env` 中的应用配置，包括服务端使用的 `DIFY_API_KEY` 和 `BATCH_RUN_PASSWORD`。修改应用 ID、密钥、API 地址、批量密码等配置后，重新构建、推送并部署镜像即可。构建脚本计算 `.env` 内容摘要，内容变化会刷新对应的构建缓存。应用参数直接从文件读取，不再逐项通过构建参数或服务器环境变量配置。
 
 ### 只构建
 
@@ -51,26 +56,28 @@ bash scripts/build.sh
 默认从本地 `.env` 读取 `IMAGE`，也可以指定本次构建的镜像地址：
 
 ```bash
-bash scripts/build.sh registry.cn-hangzhou.aliyuncs.com/your-namespace/customer-complaint:v2
+bash scripts/build.sh mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v5
 ```
 
 脚本完成后，镜像保存在本地 Docker 中，尚未启动容器。
 
-### 构建并推送到 ACR
+### 构建并推送到京东云镜像仓库
 
-先登录镜像仓库，按提示输入 ACR 访问凭证密码：
+先登录镜像仓库，按提示输入 镜像仓库访问凭证密码：
 
 ```bash
-docker login --username=your-acr-username registry.cn-hangzhou.aliyuncs.com
+docker login --username=your-jdcloud-username mate-docker-register-cn-north-1.jcr.service.jdcloud.com
 
 # 使用 .env 中的 IMAGE
 bash scripts/build.sh --push
 
 # 或指定本次镜像地址
-bash scripts/build.sh registry.cn-hangzhou.aliyuncs.com/your-namespace/customer-complaint:v2 --push
+bash scripts/build.sh mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v5 --push
 ```
 
 `--push` 要求完整的镜像仓库地址。每次发布建议使用不同版本标签。`PUSH_IMAGE=true bash scripts/build.sh` 也可用于流水线。
+
+构建默认关闭 provenance 和 SBOM 证明附件，兼容当前京东云镜像仓库 仓库。若旧镜像推送出现 `unknown manifest class for application/vnd.oci.empty.v1+json`，使用更新后的脚本重新构建并推送即可；只重试推送旧镜像仍会携带原有附件。重新构建可复用已有层缓存。
 
 本地快捷命令为 `npm run docker:build`，兼容原有的 `npm run build:ci`。例如 `npm run docker:build -- --push`。
 
@@ -78,61 +85,43 @@ bash scripts/build.sh registry.cn-hangzhou.aliyuncs.com/your-namespace/customer-
 
 ### 准备部署文件
 
-服务器只需要以下文件，**不要上传本地的 `compose.override.yaml` 或包含本地配置的 `.env`**：
+服务器只需要以下文件：
 
 ```text
 /opt/customer-complaint/
   compose.yaml
-  .env
   scripts/
     deploy-server.sh
 ```
 
-`compose.yaml` 只包含运行配置。`compose.override.yaml` 仅供本地构建使用，本地 Docker Compose 会自动合并它；两个脚本都会明确选择所需配置文件。
+`compose.yaml` 只包含运行配置。`.env` 已随镜像发布，无需单独上传或编辑。`compose.override.yaml` 仅供本地构建使用；两个脚本都会明确选择所需配置文件。
 
 首次可在本地执行以下上传命令，替换服务器地址和登录用户。远程目录需要由该用户写入：
 
 ```bash
 ssh deploy@your-server 'mkdir -p /opt/customer-complaint/scripts'
-scp compose.yaml .env.server.example deploy@your-server:/opt/customer-complaint/
+scp compose.yaml deploy@your-server:/opt/customer-complaint/
 scp scripts/deploy-server.sh deploy@your-server:/opt/customer-complaint/scripts/
 ```
 
-在服务器上首次创建运行配置：
-
-```bash
-cd /opt/customer-complaint
-test -f .env || cp .env.server.example .env
-chmod 600 .env
-```
-
-编辑服务器 `.env`：
-
-```dotenv
-IMAGE=registry.cn-hangzhou.aliyuncs.com/your-namespace/customer-complaint:v1
-DIFY_API_KEY=your-production-dify-api-key
-BATCH_RUN_PASSWORD=your-batch-password
-APP_PORT=3000
-```
-
-`DIFY_API_KEY` 是运行时使用的生产密钥。`BATCH_RUN_PASSWORD` 是批量分析功能的验证密码，留空使用应用内置默认值。`APP_PORT` 是服务器对外端口，默认 `3000`；云服务器安全组需要放行该端口。
+默认对外端口为 `3000`，云服务器安全组需要放行该端口。需要调整宿主机端口时可在部署命令前设置 `APP_PORT=其他端口`，容器内部仍监听 `3000`。本地 `.env` 中的 `APP_PORT` 用于本地 Compose 的端口映射。
 
 ### 登录并部署
 
 在服务器上执行：
 
 ```bash
-docker login --username=your-acr-username registry.cn-hangzhou.aliyuncs.com
+docker login --username=your-jdcloud-username mate-docker-register-cn-north-1.jcr.service.jdcloud.com
 
 cd /opt/customer-complaint
-bash scripts/deploy-server.sh
+bash scripts/deploy-server.sh mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v4
 ```
 
-脚本从服务器 `.env` 读取镜像地址并执行：
+脚本接收完整镜像地址并执行：
 
 1. 检查 Docker、Compose 和部署文件。
 2. 拉取指定镜像。
-3. 强制重新创建应用容器，注入服务器的运行配置。
+3. 强制重新创建应用容器，应用读取镜像内的 `.env`。
 4. 等待健康检查通过，默认超时 120 秒。
 5. 输出容器状态；失败时打印应用日志和健康检查结果并返回非零状态。
 
@@ -140,21 +129,21 @@ bash scripts/deploy-server.sh
 
 ### 升级和回滚
 
-修改服务器 `.env` 的 `IMAGE` 为目标版本，再运行部署脚本。也可以为本次部署直接传入镜像地址：
+修改项目 `.env` 中的应用配置，构建并推送新版本，然后在服务器传入新镜像地址。回滚时传入旧镜像地址，同时恢复该镜像内的应用配置：
 
 ```bash
-bash scripts/deploy-server.sh registry.cn-hangzhou.aliyuncs.com/your-namespace/customer-complaint:v2
+bash scripts/deploy-server.sh mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v5
 
-# 回滚到 v1
-bash scripts/deploy-server.sh registry.cn-hangzhou.aliyuncs.com/your-namespace/customer-complaint:v1
+# 回滚到 v4
+bash scripts/deploy-server.sh mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v4
 
 # 调整健康检查等待时间
-DEPLOY_TIMEOUT=180 bash scripts/deploy-server.sh
+DEPLOY_TIMEOUT=180 bash scripts/deploy-server.sh mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v5
 ```
 
-两个脚本的镜像地址优先级均为：脚本参数 > 环境变量 `IMAGE` > 对应机器的 `.env`。参数和环境变量仅对本次执行生效，不会修改 `.env`；固定发布版本请更新服务器的 `.env`。
+本地构建的镜像地址优先级为：脚本参数 > 环境变量 `IMAGE` > 项目 `.env`。服务器的镜像地址由脚本参数或环境变量 `IMAGE` 指定；脚本不会读取服务器已有的 `.env`，也不会用服务器环境变量覆盖镜像内的应用配置。
 
-`APP_DIR` 可指定其他服务器部署目录。密钥或批量密码更新后重新运行部署脚本即可。容器启用了自动重启、日志轮转和 HTTP 健康检查。
+`APP_DIR` 可指定其他服务器部署目录。容器启用了自动重启、日志轮转和 HTTP 健康检查。
 
 ### 日常维护
 
@@ -171,10 +160,10 @@ docker compose -f compose.yaml down
 
 ## 可选：通过 SSH 触发服务器部署
 
-原有 `scripts/deploy-remote.sh` 是可选的上传和 SSH 调用工具，服务器的实际部署逻辑统一调用 `scripts/deploy-server.sh`。服务器 `.env` 需提前准备：
+原有 `scripts/deploy-remote.sh` 是可选的上传和 SSH 调用工具，服务器的实际部署逻辑统一调用 `scripts/deploy-server.sh`。它会上传 Compose 文件和部署脚本，无需准备服务器 `.env`：
 
 ```bash
-IMAGE=registry.cn-hangzhou.aliyuncs.com/your-namespace/customer-complaint:v1 \
+IMAGE=mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v4 \
 SSH_HOST=your-server \
 SSH_USER=deploy \
 SSH_KEY=/path/to/ssh-key \
@@ -195,11 +184,11 @@ bash scripts/deploy-remote.sh
 
 ## 本地开发
 
-使用 Node.js 22，在 `.env.local` 中配置应用参数，然后运行：
+使用 Node.js 22，直接使用项目 `.env` 中的应用参数，然后运行：
 
 ```bash
 npm ci --legacy-peer-deps
 npm run dev
 ```
 
-应用标题、默认语言等信息在 `config/index.ts` 中配置。本地测试 Docker 容器时，可运行 `docker compose up -d --build --wait --wait-timeout 120`；使用脚本参数指定镜像时，也需通过 `IMAGE` 向 Compose 指定相同镜像。
+应用标题、默认语言等信息在 `config/index.ts` 中配置。本地测试 Docker 容器时，先执行 `bash scripts/build.sh`，再运行 `docker compose up -d --no-build --wait --wait-timeout 120`。构建使用脚本参数指定镜像时，也需通过 `IMAGE` 向 Compose 指定相同镜像。
