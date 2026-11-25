@@ -34,7 +34,11 @@ docker info >/dev/null
 if [[ -n "${DEPLOY_IMAGE}" ]]; then
   export IMAGE="${DEPLOY_IMAGE}"
 fi
-compose=(docker compose --project-directory "${APP_DIR}" --env-file /dev/null -f "${APP_DIR}/compose.yaml")
+compose_env=/dev/null
+if [[ -r "${APP_DIR}/.env" ]]; then
+  compose_env="${APP_DIR}/.env"
+fi
+compose=(docker compose --project-directory "${APP_DIR}" --env-file "${compose_env}" -f "${APP_DIR}/compose.yaml")
 "${compose[@]}" config --quiet
 resolved_image="$("${compose[@]}" config --images)"
 registry="${resolved_image%%/*}"

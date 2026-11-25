@@ -192,3 +192,8 @@ npm run dev
 ```
 
 应用标题、默认语言等信息在 `config/index.ts` 中配置。本地测试 Docker 容器时，先执行 `bash scripts/build.sh`，再运行 `docker compose up -d --no-build --wait --wait-timeout 120`。构建使用脚本参数指定镜像时，也需通过 `IMAGE` 向 Compose 指定相同镜像。
+
+
+## 工作台登录密码
+
+本地测试在 `.env.local` 中设置 `APP_ACCESS_PASSWORD`。部署时将该变量配置在部署服务器上与 `compose.yaml` 同目录的 `.env`，由 Compose 在容器启动时注入。镜像构建使用的项目 `.env` 及 Git 提交中均不要填写登录密码。

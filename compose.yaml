@@ -5,6 +5,8 @@ services:
     image: ${IMAGE:-mate-docker-register-cn-north-1.jcr.service.jdcloud.com/mate-customer-complaint:v4}
     ports:
       - "${APP_PORT:-3000}:3000"
+    environment:
+      APP_ACCESS_PASSWORD: ${APP_ACCESS_PASSWORD:?Set APP_ACCESS_PASSWORD in the deployment environment}
     restart: unless-stopped
     init: true
     logging:

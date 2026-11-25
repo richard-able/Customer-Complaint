@@ -1,4 +1,5 @@
 'use client'
+import { parseComplaintResultRows } from '@/utils/complaint-result'
 import React, { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import cn from 'classnames'
@@ -505,7 +506,7 @@ const TextGeneration = () => {
       : typeof rawResult?.result_tsv === 'string'
         ? rawResult.result_tsv
         : Object.values(rawResult || {}).find(value => typeof value === 'string' && value.includes('\t')) as string | undefined
-    const resultRow = resultText?.split(/\r?\n/).map(line => line.split('\t')).find(row => row.length >= 23) || []
+    const resultRow = parseComplaintResultRows(resultText || '').find(row => row.length >= 23) || []
     const hasExtendedFields = resultRow.length >= 27
     const firstFieldCount = hasExtendedFields ? 12 : 10
     const secondCandidateStart = hasExtendedFields ? 13 : 11
@@ -539,6 +540,7 @@ const TextGeneration = () => {
     const res: Record<string, string | number> = {
       序号: task.id,
       客户ID: String(inputs[customerIdVariable?.key || ''] ?? ''),
+      客户优先级: resultRow[27] && resultRow[27] !== 'null' ? resultRow[27] : '',
       '告警/复核提示': warningMessages.join('；'),
       执行状态: statusLabel,
     }
