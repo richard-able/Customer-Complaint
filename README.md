@@ -111,9 +111,12 @@ chmod 600 .env
 ```dotenv
 IMAGE=registry.cn-hangzhou.aliyuncs.com/your-namespace/customer-complaint:v1
 DIFY_API_KEY=your-production-dify-api-key
+APP_ACCESS_PASSWORD=your-workbench-password
 BATCH_RUN_PASSWORD=your-batch-password
 APP_PORT=3000
 ```
+
+`APP_ACCESS_PASSWORD` 是工作台登录密码，必须配置。本地可放在 `.env.local`，Docker 部署时放在服务器的 `.env`。
 
 `DIFY_API_KEY` 是运行时使用的生产密钥。`BATCH_RUN_PASSWORD` 是批量分析功能的验证密码，留空使用应用内置默认值。`APP_PORT` 是服务器对外端口，默认 `3000`；云服务器安全组需要放行该端口。
 

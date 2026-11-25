@@ -1,4 +1,5 @@
 'use client'
+import { parseComplaintResultRows } from '@/utils/complaint-result'
 import type { FC } from 'react'
 import React, { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -86,7 +87,7 @@ const GenerationItem: FC<IGenerationItemProps> = ({
       ? content.result_tsv
       : null
   const parsedOutput = resultText
-    ? resultText.split(/\r?\n/).filter(Boolean).map((line: string) => line.split('\t'))
+    ? parseComplaintResultRows(resultText)
     : []
   const complaintRows = parsedOutput.filter((row: string[]) => row.length >= 23)
   const hasComplaintOutput = complaintRows.length > 0
@@ -235,6 +236,9 @@ const GenerationItem: FC<IGenerationItemProps> = ({
                               <div className='space-y-3'>
                                 {candidates.map((candidate, candidateIndex) => {
                                   const confidenceText = Number.isFinite(candidate.confidence) ? `${(candidate.confidence * 100).toFixed(1)}%` : '未提供'
+                                  const customerPriority = row[27] === 'null' ? '' : row[27]
+                                  const values = row.length >= 28 ? [customerPriority, ...candidate.values] : candidate.values
+                                  const displayValues = row.length >= 28 ? [`客户优先级：${customerPriority}`, ...candidate.values] : candidate.values
                                   return (
                                     <section key={candidateIndex} className={`overflow-hidden rounded-lg border ${candidate.accent}`}>
                                       <div className='flex items-center justify-between border-b border-inherit px-4 py-3'>
@@ -244,7 +248,7 @@ const GenerationItem: FC<IGenerationItemProps> = ({
                                         <div className='flex items-center gap-3'>
                                           <span className={`text-sm font-semibold ${candidate.tone}`}>置信度：{confidenceText}</span>
                                           <SimpleBtn className='space-x-1' onClick={() => {
-                                            copy(toTsv([...candidate.values, confidenceText]), { format: 'text/plain' })
+                                            copy(toTsv([...values, confidenceText]), { format: 'text/plain' })
                                             Toast.notify({ type: 'success', message: t('common.actionMsg.copySuccessfully') })
                                           }}>
                                             <Clipboard className='w-3.5 h-3.5' />
@@ -252,7 +256,7 @@ const GenerationItem: FC<IGenerationItemProps> = ({
                                           </SimpleBtn>
                                         </div>
                                       </div>
-                                      <pre className={`overflow-auto whitespace-pre-wrap break-words px-4 py-3 text-sm leading-6 ${candidate.tone}`}>{candidate.values.join('\n')}</pre>
+                                      <pre className={`overflow-auto whitespace-pre-wrap break-words px-4 py-3 text-sm leading-6 ${candidate.tone}`}>{displayValues.join('\n')}</pre>
                                     </section>
                                   )
                                 })}

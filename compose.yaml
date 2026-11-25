@@ -7,6 +7,7 @@ services:
       - "${APP_PORT:-3000}:3000"
     environment:
       DIFY_API_KEY: ${DIFY_API_KEY:-}
+      APP_ACCESS_PASSWORD: ${APP_ACCESS_PASSWORD:-}
       BATCH_RUN_PASSWORD: ${BATCH_RUN_PASSWORD:-}
     restart: unless-stopped
     init: true
